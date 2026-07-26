@@ -124,6 +124,7 @@ export default function App() {
           setRankingEnabled={setRankingEnabled}
           weatherEnabled={weatherEnabled}
           setWeatherEnabled={setWeatherEnabled}
+          expectedCustomerId={DEMO_CUSTOMER_ID}
         />
       ) : (
         <CustomerView
@@ -133,6 +134,7 @@ export default function App() {
           onUseBonusSpin={handleUseBonusSpin}
           history={account.history}
           rankingEnabled={rankingEnabled}
+          customerId={DEMO_CUSTOMER_ID}
         />
       )}
     </div>
