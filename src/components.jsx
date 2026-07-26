@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import {
   QrCode,
   Wallet,
@@ -620,18 +621,27 @@ function RankSettings({ rankingEnabled, setRankingEnabled }) {
 }
 
 // ---------------- STORE CHARGE / PURCHASE SCREEN ----------------
-function ChargeScreen({ onCharge, onDeduct }) {
+function ChargeScreen({ onCharge, onDeduct, expectedCustomerId }) {
   const [screenMode, setScreenMode] = useState("charge"); // "charge" | "purchase"
   const [readMethod, setReadMethod] = useState("qr"); // "qr" | "cardTap"
   const [amount, setAmount] = useState(10000);
-  const [scanned, setScanned] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState(null);
   const [done, setDone] = useState(false);
   const [posConnected, setPosConnected] = useState(true);
   const posMockAmount = 2480;
+  const scannerRef = React.useRef(null);
+  const scannerDivId = "picopay-qr-reader";
+  const ROTATE_MS = 30000;
 
   const reset = () => {
-    setScanned(false);
+    setScanning(false);
+    setScanError(null);
     setDone(false);
+    if (scannerRef.current) {
+      scannerRef.current.stop().catch(() => {});
+      scannerRef.current = null;
+    }
   };
 
   const switchMode = (m) => {
@@ -641,13 +651,66 @@ function ChargeScreen({ onCharge, onDeduct }) {
     if (m === "charge") setAmount(10000);
   };
 
-  const scan = () => {
-    setScanned(true);
-    setTimeout(() => {
-      if (screenMode === "charge") onCharge(Number(amount));
-      else onDeduct(Number(amount));
-      setDone(true);
-    }, 900);
+  const complete = () => {
+    if (scannerRef.current) {
+      scannerRef.current.stop().catch(() => {});
+      scannerRef.current = null;
+    }
+    if (screenMode === "charge") onCharge(Number(amount));
+    else onDeduct(Number(amount));
+    setScanning(false);
+    setDone(true);
+  };
+
+  const handleDecodedText = (text) => {
+    const parts = text.split(":");
+    if (parts.length !== 3 || parts[0] !== "PICOPAY") {
+      setScanError("PicoPayのQRコードではありません");
+      return;
+    }
+    const [, scannedId, scannedBucketStr] = parts;
+    const scannedBucket = Number(scannedBucketStr);
+    const currentBucket = Math.floor(Date.now() / ROTATE_MS);
+
+    if (scannedId !== expectedCustomerId) {
+      setScanError("お客様のQRコードと一致しません");
+      return;
+    }
+    // Allow the current window and the one just before it, so a scan right
+    // as the code rotates doesn't fail unnecessarily.
+    if (Math.abs(currentBucket - scannedBucket) > 1) {
+      setScanError("QRコードの有効期限が切れています。もう一度お客様の画面を表示してもらってください");
+      return;
+    }
+    complete();
+  };
+
+  const startScan = async () => {
+    setScanError(null);
+    setScanning(true);
+    try {
+      const { Html5Qrcode } = await import("html5-qrcode");
+      const scanner = new Html5Qrcode(scannerDivId);
+      scannerRef.current = scanner;
+      await scanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: 220 },
+        (decodedText) => {
+          scanner.stop().catch(() => {});
+          scannerRef.current = null;
+          handleDecodedText(decodedText);
+        },
+        () => {} // ignore per-frame "not found" errors
+      );
+    } catch (e) {
+      setScanError("カメラを起動できませんでした。ブラウザのカメラ権限を確認してください");
+      setScanning(false);
+    }
+  };
+
+  const tapCard = () => {
+    setScanning(true);
+    setTimeout(() => complete(), 900);
   };
 
   return (
@@ -684,7 +747,7 @@ function ChargeScreen({ onCharge, onDeduct }) {
           ].map((m) => (
             <button
               key={m.key}
-              onClick={() => setReadMethod(m.key)}
+              onClick={() => { setReadMethod(m.key); reset(); }}
               className="px-3 py-1 rounded-full text-[11px] font-semibold transition"
               style={readMethod === m.key ? { background: C.teal, color: "#fff" } : { color: C.mute }}
             >
@@ -695,7 +758,7 @@ function ChargeScreen({ onCharge, onDeduct }) {
       </div>
       <div className="text-[11px] mt-1" style={{ color: C.mute }}>
         {screenMode === "charge"
-          ? `金額を入力してから、お客様の${readMethod === "qr" ? "画面のQRコード" : "カード"}を${readMethod === "qr" ? "読み取ります" : "タッチします"}。同時に、お客様側・この管理画面側の両方に反映されます。`
+          ? `金額を入力してから、お客様の${readMethod === "qr" ? "画面のQRコードをカメラで読み取ります" : "カードをタッチします"}。同時に、お客様側・この管理画面側の両方に反映されます。`
           : "POS連携済みの店舗は会計金額が自動入力されます。未連携の場合は手動で金額を入力してください。"}
       </div>
 
@@ -744,14 +807,32 @@ function ChargeScreen({ onCharge, onDeduct }) {
         </div>
       )}
 
+      {readMethod === "qr" && scanning && (
+        <div className="mt-3 rounded-xl overflow-hidden" style={{ border: `1px solid ${C.line}` }}>
+          <div id={scannerDivId} style={{ width: "100%" }} />
+        </div>
+      )}
+
+      {scanError && (
+        <div className="mt-3 rounded-xl p-3 text-[12px] font-semibold" style={{ background: C.coralSoft, color: C.coral }}>
+          {scanError}
+        </div>
+      )}
+
       {!done ? (
         <button
-          onClick={scan}
-          disabled={scanned}
+          onClick={readMethod === "qr" ? (scanning ? undefined : startScan) : tapCard}
+          disabled={scanning && readMethod !== "qr"}
           className="mt-4 w-full rounded-full py-3 text-sm font-bold"
-          style={{ background: screenMode === "charge" ? C.teal : C.ink, color: "#fff", opacity: scanned ? 0.6 : 1 }}
+          style={{ background: screenMode === "charge" ? C.teal : C.ink, color: "#fff", opacity: scanning && readMethod !== "qr" ? 0.6 : 1 }}
         >
-          {scanned ? "読み取り中…" : readMethod === "qr" ? "お客様のQRコードを読み取る" : "お客様のカードをタッチする"}
+          {readMethod === "qr"
+            ? scanning
+              ? "カメラでお客様のQRコードを映してください"
+              : "カメラでQRコードを読み取る"
+            : scanning
+              ? "読み取り中…"
+              : "お客様のカードをタッチする"}
         </button>
       ) : (
         <div className="mt-4 rounded-xl p-3 text-center" style={{ background: C.coralSoft }}>
@@ -1002,7 +1083,7 @@ function CustomerRegistration({ onDone }) {
 }
 
 // ---------------- STORE (ADMIN) VIEW ----------------
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled }) {
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, expectedCustomerId }) {
   const [tab, setTab] = useState("dashboard");
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
@@ -1147,7 +1228,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
         </>
       )}
 
-      {tab === "pay" && <ChargeScreen onCharge={onCharge} onDeduct={onDeduct} />}
+      {tab === "pay" && <ChargeScreen onCharge={onCharge} onDeduct={onDeduct} expectedCustomerId={expectedCustomerId} />}
 
       {/* Bottom nav */}
       <div
@@ -1173,10 +1254,22 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
 }
 
 // ---------------- CUSTOMER VIEW ----------------
-function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusSpin, history, rankingEnabled }) {
+function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusSpin, history, rankingEnabled, customerId }) {
   const [spinning, setSpinning] = useState(false);
   const [result, setResult] = useState(null);
   const [openDate, setOpenDate] = useState(null);
+
+  // The QR code encodes a token that changes every 30 seconds, so a
+  // screenshot or photo of the screen stops working shortly after — it has
+  // to be the customer's live screen at the moment the store scans it.
+  const ROTATE_MS = 30000;
+  const [qrBucket, setQrBucket] = useState(Math.floor(Date.now() / ROTATE_MS));
+  useEffect(() => {
+    const id = setInterval(() => setQrBucket(Math.floor(Date.now() / ROTATE_MS)), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const qrValue = `PICOPAY:${customerId}:${qrBucket}`;
+  const secondsLeft = ROTATE_MS / 1000 - (Math.floor(Date.now() / 1000) % (ROTATE_MS / 1000));
 
   const spin = () => {
     if (!bonusEligible) return;
@@ -1238,18 +1331,12 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
         </div>
         <div className="mt-4 flex justify-center">
           <div className="bg-white rounded-xl p-3">
-            <div
-              className="w-28 h-28 rounded"
-              style={{
-                backgroundImage:
-                  "repeating-linear-gradient(0deg, #0F2E2B 0 4px, transparent 4px 8px), repeating-linear-gradient(90deg, #0F2E2B 0 4px, transparent 4px 8px)",
-                backgroundBlendMode: "multiply",
-              }}
-              aria-label="QRコード"
-            />
+            <QRCodeSVG value={qrValue} size={112} level="M" />
           </div>
         </div>
-        <div className="text-[11px] mt-2 opacity-80">お店の端末にこの画面をかざしてください</div>
+        <div className="text-[11px] mt-2 opacity-80">
+          お店の端末にこの画面をかざしてください({secondsLeft}秒ごとに更新)
+        </div>
       </div>
 
       {/* Gacha */}
