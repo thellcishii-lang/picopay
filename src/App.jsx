@@ -118,7 +118,13 @@ function PhoneVerifyGate({ expectedPhone, onVerified }) {
       const result = await sendPhoneCode(expectedPhone, verifierRef.current);
       setConfirmation(result);
     } catch (e) {
-      setError("SMSを送信できませんでした。電話番号の形式(+819012345678のような形)を確認してください");
+      // A failed attempt often leaves the reCAPTCHA verifier in a bad
+      // state — drop it so the next click creates a fresh one.
+      if (verifierRef.current) {
+        try { verifierRef.current.clear(); } catch (_) {}
+        verifierRef.current = null;
+      }
+      setError(`SMSを送信できませんでした: ${e?.code || ""} ${e?.message || e}`);
     } finally {
       setBusy(false);
     }
