@@ -621,13 +621,14 @@ function RankSettings({ rankingEnabled, setRankingEnabled }) {
 }
 
 // ---------------- STORE CHARGE / PURCHASE SCREEN ----------------
-function ChargeScreen({ onCharge, onDeduct, expectedCustomerId }) {
+function ChargeScreen({ onCharge, onDeduct }) {
   const [screenMode, setScreenMode] = useState("charge"); // "charge" | "purchase"
   const [readMethod, setReadMethod] = useState("qr"); // "qr" | "cardTap"
   const [amount, setAmount] = useState(10000);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState(null);
   const [done, setDone] = useState(false);
+  const [scannedName, setScannedName] = useState(null);
   const [posConnected, setPosConnected] = useState(true);
   const posMockAmount = 2480;
   const scannerRef = React.useRef(null);
@@ -651,13 +652,14 @@ function ChargeScreen({ onCharge, onDeduct, expectedCustomerId }) {
     if (m === "charge") setAmount(10000);
   };
 
-  const complete = () => {
+  const complete = (customerId) => {
     if (scannerRef.current) {
       scannerRef.current.stop().catch(() => {});
       scannerRef.current = null;
     }
-    if (screenMode === "charge") onCharge(Number(amount));
-    else onDeduct(Number(amount));
+    if (screenMode === "charge") onCharge(Number(amount), customerId);
+    else onDeduct(Number(amount), customerId);
+    setScannedName(customerId);
     setScanning(false);
     setDone(true);
   };
@@ -672,17 +674,13 @@ function ChargeScreen({ onCharge, onDeduct, expectedCustomerId }) {
     const scannedBucket = Number(scannedBucketStr);
     const currentBucket = Math.floor(Date.now() / ROTATE_MS);
 
-    if (scannedId !== expectedCustomerId) {
-      setScanError("お客様のQRコードと一致しません");
-      return;
-    }
     // Allow the current window and the one just before it, so a scan right
     // as the code rotates doesn't fail unnecessarily.
     if (Math.abs(currentBucket - scannedBucket) > 1) {
       setScanError("QRコードの有効期限が切れています。もう一度お客様の画面を表示してもらってください");
       return;
     }
-    complete();
+    complete(scannedId);
   };
 
   const startScan = async () => {
@@ -841,7 +839,7 @@ function ChargeScreen({ onCharge, onDeduct, expectedCustomerId }) {
             {Number(amount).toLocaleString()} {screenMode === "charge" ? "反映しました" : "お会計完了"}
           </div>
           <div className="text-[11px] mt-1" style={{ color: C.mute }}>
-            お客様の画面にも即時反映されています
+            {scannedName ? `お客様ID: ${scannedName}・` : ""}お客様の画面にも即時反映されています
           </div>
           <button
             onClick={reset}
@@ -858,7 +856,7 @@ function ChargeScreen({ onCharge, onDeduct, expectedCustomerId }) {
 
 
 // ---------------- CUSTOMER REGISTRATION ----------------
-function CustomerRegistration({ onDone }) {
+function CustomerRegistration({ onDone, onRegister }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -870,6 +868,7 @@ function CustomerRegistration({ onDone }) {
   const [notify, setNotify] = useState({ email: true, line: true });
   const [lineLinked, setLineLinked] = useState(false);
   const [issued, setIssued] = useState(null);
+  const [issuing, setIssuing] = useState(false);
 
   const canSubmit = name.trim().length > 0 && (!requireId || smsVerified);
 
@@ -878,28 +877,30 @@ function CustomerRegistration({ onDone }) {
     if (smsCode.length >= 4) setSmsVerified(true);
   };
 
-  const issue = () => {
-    const serial = `U-${Math.floor(1000 + Math.random() * 9000)}`;
-    setIssued(serial);
+  const issue = async () => {
+    setIssuing(true);
+    try {
+      const customerId = await onRegister({ name, phone, email });
+      setIssued(customerId);
+    } finally {
+      setIssuing(false);
+    }
   };
 
   if (issued) {
+    const setupUrl = `${window.location.origin}/customer?id=${issued}`;
     return (
       <div className="mt-3 rounded-2xl p-4 text-center" style={{ background: C.coralSoft }}>
         <div className="text-sm font-bold" style={{ color: C.coral }}>登録完了しました</div>
-        <div className="mt-2 text-xs" style={{ color: C.ink }}>{name} 様・シリアルNo. {issued}</div>
+        <div className="mt-2 text-xs" style={{ color: C.ink }}>{name} 様・お客様ID: {issued}</div>
         <div className="text-[11px] mt-1" style={{ color: C.mute }}>
-          {issueMethod === "qr" ? "お客様の画面にQRコードを表示してください" : "カードにシリアルを書き込みました"}
+          お客様のスマホでこのQRを読み取ると、PicoPayの画面がそのまま開きます(お客様ご自身での入力は不要です)
         </div>
         <div className="mt-3 rounded-lg bg-white p-3 inline-block">
-          <div
-            className="w-20 h-20 rounded"
-            style={{
-              backgroundImage:
-                "repeating-linear-gradient(0deg, #0F2E2B 0 3px, transparent 3px 6px), repeating-linear-gradient(90deg, #0F2E2B 0 3px, transparent 3px 6px)",
-              backgroundBlendMode: "multiply",
-            }}
-          />
+          <QRCodeSVG value={setupUrl} size={80} level="M" />
+        </div>
+        <div className="text-[10px] mt-1" style={{ color: C.mute }}>
+          このQRはお客様の初回設定用です(決済用QRとは別物です)
         </div>
 
         {notify.line && !lineLinked && (
@@ -1072,18 +1073,18 @@ function CustomerRegistration({ onDone }) {
 
       <button
         onClick={issue}
-        disabled={!canSubmit}
+        disabled={!canSubmit || issuing}
         className="mt-4 w-full rounded-full py-2.5 text-sm font-bold"
-        style={{ background: canSubmit ? C.teal : C.line, color: canSubmit ? "#fff" : C.mute }}
+        style={{ background: canSubmit ? C.teal : C.line, color: canSubmit ? "#fff" : C.mute, opacity: issuing ? 0.6 : 1 }}
       >
-        登録してシリアルを発行
+        {issuing ? "登録中…" : "登録してお客様IDを発行"}
       </button>
     </div>
   );
 }
 
 // ---------------- STORE (ADMIN) VIEW ----------------
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, expectedCustomerId }) {
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer }) {
   const [tab, setTab] = useState("dashboard");
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
@@ -1129,7 +1130,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
       {/* Quick stats */}
       <div className="mt-4 grid grid-cols-3 gap-2">
         {[
-          { icon: Users, label: "登録客数", value: mockCustomers.length },
+          { icon: Users, label: "登録客数", value: customers.length },
           { icon: TrendingUp, label: "今月チャージ", value: "¥318,000" },
           { icon: Gift, label: "今月ボーナス付与", value: "¥41,200" },
         ].map((s, i) => (
@@ -1189,10 +1190,20 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
             </button>
           </div>
 
-          {showRegister && <CustomerRegistration onDone={() => setShowRegister(false)} />}
+          {showRegister && (
+            <CustomerRegistration
+              onRegister={onRegisterCustomer}
+              onDone={() => setShowRegister(false)}
+            />
+          )}
 
           <div className="mt-2 rounded-xl overflow-hidden" style={{ border: `1px solid ${C.line}` }}>
-            {mockCustomers.map((c, i) => (
+            {customers.length === 0 && (
+              <div className="px-3 py-4 text-center text-[12px]" style={{ background: C.paper, color: C.mute }}>
+                まだ登録されたお客様がいません
+              </div>
+            )}
+            {customers.map((c, i) => (
               <div
                 key={c.id}
                 className="flex items-center justify-between px-3 py-3"
@@ -1206,7 +1217,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
                       </span>
                     )}{rankingEnabled && c.rank ? " " : ""}{c.name}
                   </div>
-                  <div className="text-[11px]" style={{ color: C.mute }}>カードNo.{c.id}・最終来店 {c.lastVisit}</div>
+                  <div className="text-[11px]" style={{ color: C.mute }}>お客様ID: {c.id}</div>
                 </div>
                 <div className="text-right">
                   <div className="text-sm font-bold" style={{ color: C.teal }}>¥{c.balance.toLocaleString()}</div>
@@ -1228,7 +1239,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
         </>
       )}
 
-      {tab === "pay" && <ChargeScreen onCharge={onCharge} onDeduct={onDeduct} expectedCustomerId={expectedCustomerId} />}
+      {tab === "pay" && <ChargeScreen onCharge={onCharge} onDeduct={onDeduct} />}
 
       {/* Bottom nav */}
       <div
