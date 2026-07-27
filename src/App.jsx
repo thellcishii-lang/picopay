@@ -4,6 +4,7 @@ import { C, StoreView, CustomerView } from "./components.jsx";
 import {
   subscribeToAccount,
   getAccountOnce,
+  getAccountPhone,
   saveAccount,
   createAccount,
   listCustomers,
@@ -284,26 +285,43 @@ export default function App() {
   const [setupInput, setSetupInput] = useState("");
   const [account, setAccount] = useState(DEFAULT_ACCOUNT);
   const [accountLoaded, setAccountLoaded] = useState(false);
+  // The phone number on file for this account — fetched via a public,
+  // read-only lookup so we can decide whether verification is needed
+  // *before* the customer is authenticated (see getAccountPhone in firebase.js).
+  const [myPhone, setMyPhone] = useState(undefined); // undefined = not checked yet, null = no phone on file
   // Has this device's phone been verified against this account's phone yet?
   const [phoneVerified, setPhoneVerified] = useState(false);
 
   useEffect(() => {
     if (mode !== "customer" || !myCustomerId) return;
+    let cancelled = false;
+    getAccountPhone(myCustomerId).then((phone) => {
+      if (!cancelled) setMyPhone(phone);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, myCustomerId]);
+
+  // If this browser session's Firebase Auth phone number already matches the
+  // account's registered phone (or there's no phone on file at all), skip
+  // the verification screen and load the real account data.
+  useEffect(() => {
+    if (myPhone === undefined) return; // still checking
+    if (!myPhone || authUser?.phoneNumber === myPhone) {
+      setPhoneVerified(true);
+    }
+  }, [myPhone, authUser]);
+
+  useEffect(() => {
+    if (mode !== "customer" || !myCustomerId || !phoneVerified) return;
     setAccountLoaded(false);
     const unsubscribe = subscribeToAccount(myCustomerId, (data) => {
       setAccount(data);
       setAccountLoaded(true);
     });
     return () => unsubscribe();
-  }, [mode, myCustomerId]);
-
-  // If this browser session's Firebase Auth phone number already matches the
-  // account's registered phone, skip the verification screen.
-  useEffect(() => {
-    if (account?.profile?.phone && authUser?.phoneNumber === account.profile.phone) {
-      setPhoneVerified(true);
-    }
-  }, [account, authUser]);
+  }, [mode, myCustomerId, phoneVerified]);
 
   const handleUseBonusSpin = (rate) => {
     if (!myCustomerId) return;
@@ -337,7 +355,7 @@ export default function App() {
     setMyCustomerId(id);
   };
 
-  const needsPhoneGate = mode === "customer" && accountLoaded && account?.profile?.phone && !phoneVerified;
+  const needsPhoneGate = mode === "customer" && myPhone !== undefined && myPhone && !phoneVerified;
 
   return (
     <div className="min-h-screen" style={{ background: C.cream, fontFamily: "'Hiragino Sans', system-ui, sans-serif" }}>
@@ -397,15 +415,19 @@ export default function App() {
             </button>
           </div>
         </div>
-      ) : !accountLoaded ? (
+      ) : myPhone === undefined ? (
         <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
           <div className="text-sm" style={{ color: C.mute }}>読み込み中…</div>
         </div>
       ) : needsPhoneGate ? (
         <PhoneVerifyGate
-          expectedPhone={account.profile.phone}
+          expectedPhone={myPhone}
           onVerified={() => setPhoneVerified(true)}
         />
+      ) : !accountLoaded ? (
+        <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
+          <div className="text-sm" style={{ color: C.mute }}>読み込み中…</div>
+        </div>
       ) : (
         <CustomerView
           pointBalance={account.pointBalance || 0}
