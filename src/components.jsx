@@ -869,6 +869,7 @@ function CustomerRegistration({ onDone, onRegister }) {
   const [lineLinked, setLineLinked] = useState(false);
   const [issued, setIssued] = useState(null);
   const [issuing, setIssuing] = useState(false);
+  const [issueError, setIssueError] = useState(null);
 
   const canSubmit = name.trim().length > 0 && phone.trim().length > 0 && (!requireId || smsVerified);
 
@@ -877,11 +878,24 @@ function CustomerRegistration({ onDone, onRegister }) {
     if (smsCode.length >= 4) setSmsVerified(true);
   };
 
+  // Normalize common Japanese phone input ("090 1234 5678", "090-1234-5678")
+  // into E.164 format ("+819012345678") since that's what Firebase phone
+  // auth requires.
+  const normalizePhone = (raw) => {
+    const digits = raw.replace(/[^\d+]/g, "");
+    if (digits.startsWith("+")) return digits;
+    if (digits.startsWith("0")) return "+81" + digits.slice(1);
+    return digits;
+  };
+
   const issue = async () => {
     setIssuing(true);
+    setIssueError(null);
     try {
-      const customerId = await onRegister({ name, phone, email });
+      const customerId = await onRegister({ name, phone: normalizePhone(phone), email });
       setIssued(customerId);
+    } catch (e) {
+      setIssueError(e?.message || "登録に失敗しました。もう一度お試しください");
     } finally {
       setIssuing(false);
     }
@@ -1079,6 +1093,11 @@ function CustomerRegistration({ onDone, onRegister }) {
       >
         {issuing ? "登録中…" : "登録してお客様IDを発行"}
       </button>
+      {issueError && (
+        <div className="mt-2 text-[11px] font-semibold" style={{ color: C.coral }}>
+          {issueError}
+        </div>
+      )}
     </div>
   );
 }
