@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import ModeTopBar from "./TopBar.jsx";
 import { C, StoreView, CustomerView } from "./components.jsx";
 import {
@@ -8,6 +8,13 @@ import {
   createAccount,
   listCustomers,
   DEFAULT_ACCOUNT,
+  auth,
+  subscribeToAuth,
+  storeSignIn,
+  storeSignUp,
+  storeSignOut,
+  setupRecaptcha,
+  sendPhoneCode,
 } from "./firebase.js";
 
 // Which role this page is depends on the URL, not a button:
@@ -18,8 +25,176 @@ function modeFromPath() {
   return window.location.pathname.startsWith("/customer") ? "customer" : "store";
 }
 
+// ---------------- STORE LOGIN ----------------
+function StoreLogin() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isSignup, setIsSignup] = useState(false);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      if (isSignup) await storeSignUp(email, password);
+      else await storeSignIn(email, password);
+    } catch (e) {
+      setError(
+        isSignup
+          ? "登録できませんでした(既に使われているメールアドレスか、パスワードが短すぎる可能性があります)"
+          : "ログインできませんでした(メールアドレスかパスワードが違います)"
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="max-w-md mx-auto px-4 pt-10">
+      <div className="rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+        <div className="text-sm font-bold" style={{ color: C.ink }}>
+          {isSignup ? "店舗アカウントを作成" : "店舗ログイン"}
+        </div>
+        <input
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="メールアドレス"
+          className="mt-3 w-full rounded-lg px-3 py-2 text-sm outline-none"
+          style={{ background: C.cream, color: C.ink }}
+        />
+        <input
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          type="password"
+          placeholder="パスワード(6文字以上)"
+          className="mt-2 w-full rounded-lg px-3 py-2 text-sm outline-none"
+          style={{ background: C.cream, color: C.ink }}
+        />
+        {error && (
+          <div className="mt-2 text-[11px] font-semibold" style={{ color: C.coral }}>
+            {error}
+          </div>
+        )}
+        <button
+          onClick={submit}
+          disabled={busy || !email || password.length < 6}
+          className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
+          style={{
+            background: email && password.length >= 6 ? C.teal : C.line,
+            color: email && password.length >= 6 ? "#fff" : C.mute,
+            opacity: busy ? 0.6 : 1,
+          }}
+        >
+          {busy ? "処理中…" : isSignup ? "登録する" : "ログイン"}
+        </button>
+        <button
+          onClick={() => { setIsSignup((v) => !v); setError(null); }}
+          className="mt-2 w-full text-[11px] font-semibold"
+          style={{ color: C.teal }}
+        >
+          {isSignup ? "すでにアカウントがある方はこちら" : "初めての方はこちら(アカウント作成)"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------- CUSTOMER PHONE VERIFICATION ----------------
+function PhoneVerifyGate({ expectedPhone, onVerified }) {
+  const [code, setCode] = useState("");
+  const [confirmation, setConfirmation] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const recaptchaContainerId = "picopay-recaptcha";
+  const verifierRef = useRef(null);
+
+  const send = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      if (!verifierRef.current) verifierRef.current = setupRecaptcha(recaptchaContainerId);
+      const result = await sendPhoneCode(expectedPhone, verifierRef.current);
+      setConfirmation(result);
+    } catch (e) {
+      setError("SMSを送信できませんでした。電話番号の形式(+819012345678のような形)を確認してください");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verify = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const result = await confirmation.confirm(code);
+      if (result.user.phoneNumber !== expectedPhone) {
+        setError("登録されている電話番号と一致しません");
+        return;
+      }
+      onVerified();
+    } catch (e) {
+      setError("コードが正しくありません");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="max-w-md mx-auto px-4 pt-8">
+      <div className="rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+        <div className="text-sm font-bold" style={{ color: C.ink }}>本人確認(SMS認証)</div>
+        <div className="text-[12px] mt-1" style={{ color: C.mute }}>
+          登録された電話番号({expectedPhone})宛にSMSで確認コードを送ります
+        </div>
+        {!confirmation ? (
+          <button
+            onClick={send}
+            disabled={busy}
+            className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
+            style={{ background: C.teal, color: "#fff", opacity: busy ? 0.6 : 1 }}
+          >
+            {busy ? "送信中…" : "SMSを送信する"}
+          </button>
+        ) : (
+          <>
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="SMSで届いたコード"
+              className="mt-3 w-full rounded-lg px-3 py-2 text-sm outline-none"
+              style={{ background: C.cream, color: C.ink }}
+            />
+            <button
+              onClick={verify}
+              disabled={busy || !code}
+              className="mt-2 w-full rounded-full py-2.5 text-sm font-bold"
+              style={{ background: code ? C.teal : C.line, color: code ? "#fff" : C.mute, opacity: busy ? 0.6 : 1 }}
+            >
+              {busy ? "確認中…" : "確認する"}
+            </button>
+          </>
+        )}
+        {error && (
+          <div className="mt-2 text-[11px] font-semibold" style={{ color: C.coral }}>
+            {error}
+          </div>
+        )}
+      </div>
+      <div id={recaptchaContainerId} />
+    </div>
+  );
+}
+
 export default function App() {
   const [mode] = useState(modeFromPath);
+
+  // ---- Auth state (shared: applies to whichever mode this page is) ----
+  const [authUser, setAuthUser] = useState(undefined); // undefined = not checked yet, null = signed out
+  useEffect(() => {
+    const unsubscribe = subscribeToAuth(setAuthUser);
+    return () => unsubscribe();
+  }, []);
 
   // Store-side view settings — per-device for now.
   const [rankingEnabled, setRankingEnabled] = useState(true);
@@ -32,8 +207,8 @@ export default function App() {
     setCustomers(list);
   }, []);
   useEffect(() => {
-    if (mode === "store") refreshCustomers();
-  }, [mode, refreshCustomers]);
+    if (mode === "store" && authUser) refreshCustomers();
+  }, [mode, authUser, refreshCustomers]);
 
   const handleRegisterCustomer = async ({ name, phone, email }) => {
     const customerId = await createAccount({ name, phone, email });
@@ -96,10 +271,6 @@ export default function App() {
   const totalBalance = customers.reduce((s, c) => s + c.balance, 0);
 
   // ---- Customer-side: this device's own account ----
-  // A customer arrives here one of two ways:
-  //  - via /customer?id=cust-xxxx (from scanning the setup QR) — auto-saved
-  //  - via the plain /customer link — asked to type the ID once
-  // Either way, after the first time it's remembered in localStorage.
   const [myCustomerId, setMyCustomerId] = useState(() => {
     if (typeof window === "undefined") return null;
     const params = new URLSearchParams(window.location.search);
@@ -113,6 +284,8 @@ export default function App() {
   const [setupInput, setSetupInput] = useState("");
   const [account, setAccount] = useState(DEFAULT_ACCOUNT);
   const [accountLoaded, setAccountLoaded] = useState(false);
+  // Has this device's phone been verified against this account's phone yet?
+  const [phoneVerified, setPhoneVerified] = useState(false);
 
   useEffect(() => {
     if (mode !== "customer" || !myCustomerId) return;
@@ -123,6 +296,14 @@ export default function App() {
     });
     return () => unsubscribe();
   }, [mode, myCustomerId]);
+
+  // If this browser session's Firebase Auth phone number already matches the
+  // account's registered phone, skip the verification screen.
+  useEffect(() => {
+    if (account?.profile?.phone && authUser?.phoneNumber === account.profile.phone) {
+      setPhoneVerified(true);
+    }
+  }, [account, authUser]);
 
   const handleUseBonusSpin = (rate) => {
     if (!myCustomerId) return;
@@ -156,21 +337,42 @@ export default function App() {
     setMyCustomerId(id);
   };
 
+  const needsPhoneGate = mode === "customer" && accountLoaded && account?.profile?.phone && !phoneVerified;
+
   return (
     <div className="min-h-screen" style={{ background: C.cream, fontFamily: "'Hiragino Sans', system-ui, sans-serif" }}>
       <ModeTopBar mode={mode} />
       {mode === "store" ? (
-        <StoreView
-          totalBalance={totalBalance}
-          onCharge={handleCharge}
-          onDeduct={handleDeduct}
-          rankingEnabled={rankingEnabled}
-          setRankingEnabled={setRankingEnabled}
-          weatherEnabled={weatherEnabled}
-          setWeatherEnabled={setWeatherEnabled}
-          customers={customers}
-          onRegisterCustomer={handleRegisterCustomer}
-        />
+        authUser === undefined ? (
+          <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
+            <div className="text-sm" style={{ color: C.mute }}>読み込み中…</div>
+          </div>
+        ) : !authUser ? (
+          <StoreLogin />
+        ) : (
+          <>
+            <StoreView
+              totalBalance={totalBalance}
+              onCharge={handleCharge}
+              onDeduct={handleDeduct}
+              rankingEnabled={rankingEnabled}
+              setRankingEnabled={setRankingEnabled}
+              weatherEnabled={weatherEnabled}
+              setWeatherEnabled={setWeatherEnabled}
+              customers={customers}
+              onRegisterCustomer={handleRegisterCustomer}
+            />
+            <div className="max-w-md mx-auto px-4 pb-6">
+              <button
+                onClick={storeSignOut}
+                className="text-[11px] font-semibold"
+                style={{ color: C.mute }}
+              >
+                ログアウト({authUser.email})
+              </button>
+            </div>
+          </>
+        )
       ) : !myCustomerId ? (
         <div className="max-w-md mx-auto px-4 pt-8">
           <div className="rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
@@ -199,6 +401,11 @@ export default function App() {
         <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
           <div className="text-sm" style={{ color: C.mute }}>読み込み中…</div>
         </div>
+      ) : needsPhoneGate ? (
+        <PhoneVerifyGate
+          expectedPhone={account.profile.phone}
+          onVerified={() => setPhoneVerified(true)}
+        />
       ) : (
         <CustomerView
           pointBalance={account.pointBalance || 0}
