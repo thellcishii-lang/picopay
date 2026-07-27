@@ -870,7 +870,7 @@ function CustomerRegistration({ onDone, onRegister }) {
   const [issued, setIssued] = useState(null);
   const [issuing, setIssuing] = useState(false);
 
-  const canSubmit = name.trim().length > 0 && (!requireId || smsVerified);
+  const canSubmit = name.trim().length > 0 && phone.trim().length > 0 && (!requireId || smsVerified);
 
   const sendSms = () => setSmsSent(true);
   const verifySms = () => {
@@ -962,7 +962,7 @@ function CustomerRegistration({ onDone, onRegister }) {
         <input
           value={phone}
           onChange={(e) => { setPhone(e.target.value); setSmsSent(false); setSmsVerified(false); }}
-          placeholder="電話番号(SMS認証・通知用)"
+          placeholder="電話番号(必須・例: +819012345678)"
           className="w-full rounded-lg px-3 py-2 text-sm outline-none"
           style={{ background: C.cream, color: C.ink }}
         />
