@@ -83,6 +83,16 @@ const DEFAULT_ACCOUNT = {
   ],
 };
 
+// Read just a customer's phone number (public by design — see security
+// rules) so the app can decide whether to show the phone verification gate
+// *before* the customer is authenticated (otherwise it's a chicken-and-egg
+// problem: you'd need to be verified to read the data that tells you
+// verification is needed).
+export async function getAccountPhone(customerId) {
+  const snapshot = await get(ref(db, `accounts/${customerId}/profile/phone`));
+  return snapshot.val() || null;
+}
+
 // Subscribe to real-time changes for one customer's account.
 // Calls `callback(account)` immediately and again every time the data changes
 // anywhere (this device, another device, the store, etc). Returns an
