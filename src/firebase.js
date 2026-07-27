@@ -1,7 +1,16 @@
 // Firebase setup for PicoPay
-// This connects to the "PicoPay" Firebase project's Realtime Database.
+// This connects to the "PicoPay" Firebase project's Realtime Database and Authentication.
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, onValue, set, get } from "firebase/database";
+import {
+  getAuth,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+  RecaptchaVerifier,
+  signInWithPhoneNumber,
+} from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: "AIzaSyD8k35AAE9s1MeXj5pB7WVrGKg3Wlkv-xA",
@@ -15,6 +24,31 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 export const db = getDatabase(app);
+export const auth = getAuth(app);
+
+// ---- Auth: store side (email/password) ----
+export function subscribeToAuth(callback) {
+  return onAuthStateChanged(auth, callback);
+}
+export async function storeSignIn(email, password) {
+  await signInWithEmailAndPassword(auth, email, password);
+}
+export async function storeSignUp(email, password) {
+  await createUserWithEmailAndPassword(auth, email, password);
+}
+export async function storeSignOut() {
+  await signOut(auth);
+}
+
+// ---- Auth: customer side (phone number / SMS code) ----
+// `containerId` is the id of an invisible div already in the DOM.
+export function setupRecaptcha(containerId) {
+  return new RecaptchaVerifier(auth, containerId, { size: "invisible" });
+}
+// Sends the SMS and returns a "confirmation" object — call confirmation.confirm(code) next.
+export async function sendPhoneCode(phoneNumber, recaptchaVerifier) {
+  return await signInWithPhoneNumber(auth, phoneNumber, recaptchaVerifier);
+}
 
 // ---- Account helpers ----
 // One "account" = one customer's PicoPay balance/history.
@@ -77,6 +111,38 @@ export async function getAccountOnce(customerId) {
 // Overwrite the full account object for a customer.
 export async function saveAccount(customerId, account) {
   await set(ref(db, `accounts/${customerId}`), account);
+}
+
+// Create a brand-new customer account (used by store-side registration).
+// Generates a short, unique-enough ID and writes fresh default data plus
+// whatever profile fields were collected at registration. `phone` must be a
+// real number (E.164 format, e.g. +819012345678) since it's what the
+// customer will use to verify their identity later.
+export async function createAccount({ name, phone, email }) {
+  if (!phone) throw new Error("電話番号は必須です(お客様の本人確認に使います)");
+  const customerId =
+    "cust-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
+  const account = {
+    ...DEFAULT_ACCOUNT,
+    pointBalance: 0,
+    depositBalance: 0,
+    bonusEligible: false,
+    history: [],
+    profile: { name, phone, email: email || null },
+  };
+  await set(ref(db, `accounts/${customerId}`), account);
+  return customerId;
+}
+
+// List all registered customers (for the store's customer list screen).
+export async function listCustomers() {
+  const snapshot = await get(ref(db, "accounts"));
+  const data = snapshot.val() || {};
+  return Object.entries(data).map(([id, acc]) => ({
+    id,
+    name: acc.profile?.name || "(名前未登録)",
+    balance: (acc.pointBalance || 0) + (acc.depositBalance || 0),
+  }));
 }
 
 export { DEFAULT_ACCOUNT };
