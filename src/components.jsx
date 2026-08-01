@@ -1102,11 +1102,101 @@ function CustomerRegistration({ onDone, onRegister }) {
   );
 }
 
-// ---------------- STORE (ADMIN) VIEW ----------------
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer }) {
+// ---------------- CUSTOMER DATA EXPORT ----------------
+function exportCustomersCsv(customers) {
+  const header = ["お客様ID", "お名前", "残高合計"];
+  const rows = customers.map((c) => [c.id, c.name, c.balance]);
+  const csv = [header, ...rows]
+    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+    .join("\r\n");
+  // Prepend a BOM so Excel opens Japanese text correctly.
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `picopay-customers-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function CustomerDetailPanel({ customerId, onFetch }) {
+  const [detail, setDetail] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    onFetch(customerId).then((data) => {
+      if (!cancelled) {
+        setDetail(data);
+        setLoading(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [customerId, onFetch]);
+
+  const printPanel = () => window.print();
+
+  if (loading) {
+    return (
+      <div className="px-3 py-4 text-[12px]" style={{ background: C.cream, color: C.mute }}>
+        読み込み中…
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-3 py-4" style={{ background: C.cream }} id={`print-customer-${customerId}`}>
+      <div className="picopay-print-only">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-bold" style={{ color: C.ink }}>{detail?.profile?.name}様 ご利用状況</div>
+          <button
+            onClick={printPanel}
+            className="text-[11px] font-semibold no-print"
+            style={{ color: C.teal }}
+          >
+            PDFで保存/印刷
+          </button>
+        </div>
+        <div className="mt-2 grid grid-cols-2 gap-2 text-[12px]" style={{ color: C.ink }}>
+          <div>お客様ID: {customerId}</div>
+          <div>電話番号: {detail?.profile?.phone || "-"}</div>
+          <div>メール: {detail?.profile?.email || "-"}</div>
+          <div>ポイント: P{(detail?.pointBalance || 0).toLocaleString()}</div>
+          <div>預かり残高: ¥{(detail?.depositBalance || 0).toLocaleString()}</div>
+        </div>
+        <div className="mt-3 text-[11px] font-semibold" style={{ color: C.ink }}>利用履歴</div>
+        <div className="mt-1 rounded-lg overflow-hidden" style={{ border: `1px solid ${C.line}` }}>
+          {(detail?.history || []).length === 0 && (
+            <div className="px-2 py-2 text-[11px]" style={{ background: C.paper, color: C.mute }}>
+              履歴はまだありません
+            </div>
+          )}
+          {(detail?.history || []).map((h, i) => (
+            <div
+              key={i}
+              className="px-2 py-1.5 text-[11px] flex items-center justify-between"
+              style={{ background: C.paper, borderTop: i === 0 ? "none" : `1px solid ${C.line}` }}
+            >
+              <span style={{ color: C.mute }}>{h.date} {h.summary}</span>
+              <span style={{ color: h.total > 0 ? C.teal : C.ink, fontWeight: 600 }}>
+                {h.total > 0 ? "+" : ""}{h.total.toLocaleString()}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail }) {
   const [tab, setTab] = useState("dashboard");
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
 
   return (
     <div className="max-w-md mx-auto px-4 pb-24">
@@ -1200,13 +1290,22 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
           {/* Customer list */}
           <div className="mt-5 flex items-center justify-between">
             <span className="text-sm font-bold" style={{ color: C.ink }}>顧客一覧</span>
-            <button
-              onClick={() => setShowRegister((v) => !v)}
-              className="text-xs font-semibold flex items-center gap-1"
-              style={{ color: C.teal }}
-            >
-              <Plus size={13} /> {showRegister ? "閉じる" : "新規登録"}
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => exportCustomersCsv(customers)}
+                className="text-xs font-semibold"
+                style={{ color: C.teal }}
+              >
+                CSV出力
+              </button>
+              <button
+                onClick={() => setShowRegister((v) => !v)}
+                className="text-xs font-semibold flex items-center gap-1"
+                style={{ color: C.teal }}
+              >
+                <Plus size={13} /> {showRegister ? "閉じる" : "新規登録"}
+              </button>
+            </div>
           </div>
 
           {showRegister && (
@@ -1222,27 +1321,35 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
                 まだ登録されたお客様がいません
               </div>
             )}
-            {customers.map((c, i) => (
-              <div
-                key={c.id}
-                className="flex items-center justify-between px-3 py-3"
-                style={{ background: C.paper, borderTop: i === 0 ? "none" : `1px solid ${C.line}` }}
-              >
-                <div>
-                  <div className="text-sm font-semibold" style={{ color: C.ink }}>
-                    {rankingEnabled && c.rank && (
-                      <span style={{ color: RANK_META[c.rank]?.color }}>
-                        {RANK_META[c.rank]?.crown} {c.rank}
-                      </span>
-                    )}{rankingEnabled && c.rank ? " " : ""}{c.name}
+            {[...customers].sort((a, b) => a.name.localeCompare(b.name, "ja")).map((c, i) => (
+              <React.Fragment key={c.id}>
+                <button
+                  onClick={() => setExpandedId(expandedId === c.id ? null : c.id)}
+                  className="w-full flex items-center justify-between px-3 py-3 text-left"
+                  style={{ background: C.paper, borderTop: i === 0 ? "none" : `1px solid ${C.line}` }}
+                >
+                  <div>
+                    <div className="text-sm font-semibold" style={{ color: C.ink }}>
+                      {rankingEnabled && c.rank && (
+                        <span style={{ color: RANK_META[c.rank]?.color }}>
+                          {RANK_META[c.rank]?.crown} {c.rank}
+                        </span>
+                      )}{rankingEnabled && c.rank ? " " : ""}{c.name}
+                    </div>
+                    <div className="text-[11px]" style={{ color: C.mute }}>お客様ID: {c.id}</div>
                   </div>
-                  <div className="text-[11px]" style={{ color: C.mute }}>お客様ID: {c.id}</div>
-                </div>
-                <div className="text-right">
-                  <div className="text-sm font-bold" style={{ color: C.teal }}>¥{c.balance.toLocaleString()}</div>
-                  <ChevronRight size={14} className="ml-auto mt-0.5" style={{ color: C.mute }} />
-                </div>
-              </div>
+                  <div className="text-right flex items-center gap-1">
+                    <div className="text-sm font-bold" style={{ color: C.teal }}>¥{c.balance.toLocaleString()}</div>
+                    <ChevronRight
+                      size={14}
+                      style={{ color: C.mute, transform: expandedId === c.id ? "rotate(90deg)" : "none", transition: "transform .15s" }}
+                    />
+                  </div>
+                </button>
+                {expandedId === c.id && (
+                  <CustomerDetailPanel customerId={c.id} onFetch={onFetchCustomerDetail} />
+                )}
+              </React.Fragment>
             ))}
           </div>
         </>
