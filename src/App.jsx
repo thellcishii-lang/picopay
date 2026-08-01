@@ -257,7 +257,11 @@ export default function App() {
       let remaining = amount;
       const usedPoints = Math.min(prev.pointBalance || 0, remaining);
       remaining -= usedPoints;
+      const usedDeposit = Math.min(prev.depositBalance || 0, remaining);
       const newDeposit = Math.max(0, (prev.depositBalance || 0) - remaining);
+      const items = [];
+      if (usedPoints > 0) items.push({ label: "お会計(ポイント消費分)", amount: -usedPoints });
+      if (usedDeposit > 0) items.push({ label: "お会計(預かり金消費分)", amount: -usedDeposit });
       return {
         ...prev,
         pointBalance: (prev.pointBalance || 0) - usedPoints,
@@ -267,7 +271,7 @@ export default function App() {
             date: "今日",
             summary: `お会計 -¥${amount.toLocaleString()}`,
             total: -amount,
-            items: [{ label: "お会計(ポイントから優先使用)", amount: -amount }],
+            items,
           },
           ...(prev.history || []),
         ],
@@ -385,6 +389,7 @@ export default function App() {
               setWeatherEnabled={setWeatherEnabled}
               customers={customers}
               onRegisterCustomer={handleRegisterCustomer}
+              onFetchCustomerDetail={getAccountOnce}
             />
             <div className="max-w-md mx-auto px-4 pb-6">
               <button
