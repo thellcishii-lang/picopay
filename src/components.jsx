@@ -1087,11 +1087,16 @@ function exportCustomersCsv(customers) {
   URL.revokeObjectURL(url);
 }
 
-function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermanently, onDeleted }) {
+function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermanently, onDeleted, onReissue }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [showReissue, setShowReissue] = useState(false);
+  const [idPhotoDataUrl, setIdPhotoDataUrl] = useState(null);
+  const [newPhone, setNewPhone] = useState("");
+  const [reissueUrl, setReissueUrl] = useState(null);
+  const [reissueError, setReissueError] = useState(null);
 
   const load = () => {
     setLoading(true);
@@ -1122,6 +1127,55 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
     try {
       await onSetStatus(customerId, status);
       load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Downscale the captured ID photo before storing it, so it doesn't bloat
+  // the database — a phone camera photo can be several MB, but a few
+  // hundred KB is plenty to visually confirm an ID.
+  const handlePhotoSelected = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const maxW = 800;
+        const scale = Math.min(1, maxW / img.width);
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        setIdPhotoDataUrl(canvas.toDataURL("image/jpeg", 0.7));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const submitReissue = async () => {
+    setReissueError(null);
+    if (!idPhotoDataUrl) {
+      setReissueError("身分証明書の写真を撮影してください");
+      return;
+    }
+    setBusy(true);
+    try {
+      const normalizedPhone = newPhone.trim()
+        ? (() => {
+            const digits = newPhone.replace(/[^\d+]/g, "");
+            if (digits.startsWith("+")) return digits;
+            if (digits.startsWith("0")) return "+81" + digits.slice(1);
+            return digits;
+          })()
+        : null;
+      await onReissue({ customerId, newPhone: normalizedPhone, idPhotoDataUrl });
+      setReissueUrl(`${window.location.origin}/customer?id=${customerId}`);
+      load();
+    } catch (e) {
+      setReissueError(e?.message || "再発行に失敗しました");
     } finally {
       setBusy(false);
     }
@@ -1236,6 +1290,74 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
               完全削除
             </button>
           </div>
+
+          <button
+            onClick={() => { setShowReissue((v) => !v); setReissueUrl(null); setReissueError(null); }}
+            className="mt-2 w-full rounded-lg py-2 text-[11px] font-semibold"
+            style={{ background: C.paper, color: C.teal, border: `1px solid ${C.line}` }}
+          >
+            {showReissue ? "閉じる" : "端末紛失・機種変更時の再発行"}
+          </button>
+
+          {showReissue && !reissueUrl && (
+            <div className="mt-2 rounded-xl p-3" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+              <div className="text-[11px]" style={{ color: C.mute }}>
+                身分証明書(免許証・マイナンバーカード等、顔写真付き)を撮影して本人確認してください
+              </div>
+              <label className="mt-2 block">
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={(e) => handlePhotoSelected(e.target.files?.[0])}
+                  className="hidden"
+                  id={`id-photo-${customerId}`}
+                />
+                <span
+                  className="block w-full text-center rounded-lg py-2 text-[11px] font-semibold cursor-pointer"
+                  style={{ background: idPhotoDataUrl ? C.coralSoft : C.cream, color: idPhotoDataUrl ? C.coral : C.ink }}
+                  onClick={() => document.getElementById(`id-photo-${customerId}`).click()}
+                >
+                  {idPhotoDataUrl ? "✓ 撮影済み(撮り直す)" : "身分証明書を撮影する"}
+                </span>
+              </label>
+              {idPhotoDataUrl && (
+                <img src={idPhotoDataUrl} alt="身分証明書プレビュー" className="mt-2 w-full rounded-lg" />
+              )}
+              <input
+                value={newPhone}
+                onChange={(e) => setNewPhone(e.target.value)}
+                placeholder="新しい電話番号(番号が変わった場合のみ入力)"
+                className="mt-2 w-full rounded-lg px-3 py-2 text-[12px] outline-none"
+                style={{ background: C.cream, color: C.ink }}
+              />
+              <button
+                onClick={submitReissue}
+                disabled={busy || !idPhotoDataUrl}
+                className="mt-2 w-full rounded-full py-2 text-[12px] font-bold"
+                style={{ background: idPhotoDataUrl ? C.teal : C.line, color: idPhotoDataUrl ? "#fff" : C.mute, opacity: busy ? 0.6 : 1 }}
+              >
+                {busy ? "処理中…" : "本人確認して再発行する"}
+              </button>
+              {reissueError && (
+                <div className="mt-2 text-[11px] font-semibold" style={{ color: C.coral }}>
+                  {reissueError}
+                </div>
+              )}
+            </div>
+          )}
+
+          {reissueUrl && (
+            <div className="mt-2 rounded-xl p-3 text-center" style={{ background: C.coralSoft }}>
+              <div className="text-[12px] font-bold" style={{ color: C.coral }}>再発行しました</div>
+              <div className="text-[11px] mt-1" style={{ color: C.mute }}>
+                お客様の新しいスマホでこのQRを読み取ってください(SMS認証後、これまでの履歴・残高がそのまま引き継がれます)
+              </div>
+              <div className="mt-2 rounded-lg bg-white p-3 inline-block">
+                <QRCodeSVG value={reissueUrl} size={80} level="M" />
+              </div>
+            </div>
+          )}
         </div>
 
         {confirmDelete && (
@@ -1273,7 +1395,7 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
   );
 }
 
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer }) {
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer }) {
   const [tab, setTab] = useState("dashboard");
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
@@ -1464,6 +1586,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
                     onSetStatus={onSetCustomerStatus}
                     onDeletePermanently={onDeleteCustomer}
                     onDeleted={() => setExpandedId(null)}
+                    onReissue={onReissueCustomer}
                   />
                 )}
               </React.Fragment>
