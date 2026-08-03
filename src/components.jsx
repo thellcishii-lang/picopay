@@ -407,37 +407,125 @@ function DepositBonusSettings({ storeSettings, onSave }) {
 }
 
 // ---------------- POINT SETTINGS (purchase-based) ----------------
-function PointSettings() {
-  const [rate, setRate] = useState(5);
+function PointSettings({ storeSettings, onSave }) {
+  const [enabled, setEnabled] = useState(storeSettings.purchasePointEnabled ?? true);
+  const [flatMode, setFlatMode] = useState(storeSettings.purchasePointFlatMode ?? true);
+  const [flatRate, setFlatRate] = useState(storeSettings.purchasePointFlatRate ?? 5);
+  const [tiers, setTiers] = useState(
+    storeSettings.purchasePointTiers || [
+      { upTo: 3000, rate: 3 },
+      { upTo: 10000, rate: 5 },
+      { upTo: null, rate: 8 }, // null upTo = それ以上
+    ]
+  );
+  const [saved, setSaved] = useState(false);
+
+  const updateTier = (i, key, value) => {
+    setTiers((ts) => ts.map((t, idx) => (idx === i ? { ...t, [key]: value } : t)));
+  };
+
+  const save = async () => {
+    await onSave({
+      purchasePointEnabled: enabled,
+      purchasePointFlatMode: flatMode,
+      purchasePointFlatRate: Number(flatRate),
+      purchasePointTiers: tiers,
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
   return (
     <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
-      <div className="flex items-center gap-2">
-        <Gift size={16} style={{ color: C.teal }} />
-        <span className="text-sm font-bold" style={{ color: C.ink }}>ポイント設定(商品購入時)</span>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Gift size={16} style={{ color: C.teal }} />
+          <span className="text-sm font-bold" style={{ color: C.ink }}>購入ポイント(商品購入時)</span>
+        </div>
+        <button
+          onClick={() => setEnabled(!enabled)}
+          className="relative w-11 h-6 rounded-full transition-colors shrink-0"
+          style={{ background: enabled ? C.teal : C.line }}
+        >
+          <span
+            className="absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform"
+            style={{ transform: enabled ? "translateX(22px)" : "translateX(2px)" }}
+          />
+        </button>
       </div>
       <div className="text-[11px] mt-1" style={{ color: C.mute }}>
-        チャージ時のボーナスガチャとは別に、実際のお買い物・お会計時に付与するポイント還元率です。
+        チャージ時のボーナスとは別に、実際のお買い物・お会計時に付与するポイント還元率です
       </div>
-      <div className="mt-3 flex items-center gap-3">
-        <div className="flex items-center rounded-lg flex-1" style={{ background: C.cream }}>
-          <input
-            type="number"
-            value={rate}
-            onChange={(e) => setRate(e.target.value)}
-            className="w-full bg-transparent px-3 py-2 text-lg font-bold outline-none"
-            style={{ color: C.ink }}
-          />
-          <span className="pr-3 text-sm font-semibold" style={{ color: C.mute }}>%</span>
-        </div>
-        <div className="text-[11px]" style={{ color: C.mute }}>
-          例:¥2,000のお買い物 → P{Math.round(2000 * (rate / 100))}
-        </div>
-      </div>
+
+      {enabled && (
+        <>
+          <label className="mt-3 flex items-center justify-between text-[12px] rounded-xl p-3" style={{ background: C.cream, color: C.ink }}>
+            <span>全ての購入に一律の還元率をつける</span>
+            <input type="checkbox" checked={flatMode} onChange={(e) => setFlatMode(e.target.checked)} />
+          </label>
+
+          {flatMode ? (
+            <div className="mt-2 flex items-center gap-3">
+              <div className="flex items-center rounded-lg flex-1" style={{ background: C.cream }}>
+                <input
+                  type="number"
+                  value={flatRate}
+                  onChange={(e) => setFlatRate(e.target.value)}
+                  className="w-full bg-transparent px-3 py-2 text-lg font-bold outline-none"
+                  style={{ color: C.ink }}
+                />
+                <span className="pr-3 text-sm font-semibold" style={{ color: C.mute }}>%</span>
+              </div>
+              <div className="text-[11px]" style={{ color: C.mute }}>
+                例:¥2,000のお買い物 → P{Math.round(2000 * (flatRate / 100))}
+              </div>
+            </div>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {tiers.map((t, i) => (
+                <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                  <div className="col-span-7 flex items-center rounded-lg" style={{ background: C.cream }}>
+                    {t.upTo === null ? (
+                      <span className="px-3 py-2 text-sm" style={{ color: C.mute }}>それ以上</span>
+                    ) : (
+                      <>
+                        <input
+                          type="number"
+                          value={t.upTo}
+                          onChange={(e) => updateTier(i, "upTo", Number(e.target.value))}
+                          className="w-full bg-transparent px-3 py-2 text-sm font-semibold outline-none"
+                          style={{ color: C.ink }}
+                        />
+                        <span className="pr-3 text-xs font-semibold" style={{ color: C.mute }}>円まで</span>
+                      </>
+                    )}
+                  </div>
+                  <div className="col-span-5 flex items-center rounded-lg" style={{ background: C.cream }}>
+                    <input
+                      type="number"
+                      value={t.rate}
+                      onChange={(e) => updateTier(i, "rate", Number(e.target.value))}
+                      className="w-full bg-transparent px-2 py-2 text-sm font-semibold outline-none"
+                      style={{ color: C.ink }}
+                    />
+                    <span className="pr-2 text-xs font-semibold" style={{ color: C.mute }}>%</span>
+                  </div>
+                </div>
+              ))}
+              <div className="text-[10px]" style={{ color: C.mute }}>
+                ※購入金額に応じて、該当する一番上の段階の還元率が適用されます
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
       <button
+        onClick={save}
         className="mt-3 w-full rounded-full py-2 text-sm font-bold"
         style={{ background: C.teal, color: "#fff" }}
       >
-        保存
+        {saved ? "✓ 保存しました" : "保存"}
       </button>
     </div>
   );
@@ -2288,15 +2376,15 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
 
       {tab === "settings" && (
         <>
-          <GachaSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
-          <DepositBonusSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
-          <PointSettings />
+          <PointSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <RankSettings rankingEnabled={rankingEnabled} setRankingEnabled={setRankingEnabled} />
+          <ReferralSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+          <DepositBonusSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+          <GachaSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <SystemSafetySettings />
           <WeatherCampaignSettings weatherEnabled={weatherEnabled} setWeatherEnabled={setWeatherEnabled} />
-          <LineSettings lineUrl={lineUrl} onSave={onSaveStoreSettings} />
-          <ReferralSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <StoreBrandingSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+          <LineSettings lineUrl={lineUrl} onSave={onSaveStoreSettings} />
         </>
       )}
 
