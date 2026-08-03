@@ -1,7 +1,7 @@
 // Firebase setup for PicoPay
 // This connects to the "PicoPay" Firebase project's Realtime Database and Authentication.
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, onValue, set, get } from "firebase/database";
+import { getDatabase, ref, onValue, set, get, update, remove } from "firebase/database";
 import {
   getAuth,
   onAuthStateChanged,
@@ -128,6 +128,18 @@ export async function getAccountOnce(customerId) {
 // Overwrite the full account object for a customer.
 export async function saveAccount(customerId, account) {
   await set(ref(db, `accounts/${customerId}`), account);
+}
+
+// Set a customer's status: "active" | "blacklisted" | "suspended".
+// Blacklisted/suspended customers are blocked from transacting (checked at
+// scan time and shown on their own screen) but their data is kept.
+export async function setCustomerStatus(customerId, status) {
+  await update(ref(db, `accounts/${customerId}`), { status });
+}
+
+// Permanently and irreversibly delete a customer's account and all its data.
+export async function deleteCustomerPermanently(customerId) {
+  await remove(ref(db, `accounts/${customerId}`));
 }
 
 // Create a brand-new customer account (used by store-side registration).
