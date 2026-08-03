@@ -14,6 +14,7 @@ import {
   deleteCustomerPermanently,
   reissueCustomerAccess,
   requestPushToken,
+  sendPushNotification,
   DEFAULT_ACCOUNT,
   auth,
   subscribeToAuth,
@@ -373,6 +374,12 @@ export default function App() {
     });
   };
 
+  const handleSendPush = async (tokens, body) => {
+    if (!tokens || tokens.length === 0) return;
+    const title = storeSettings.storeName || "PicoPay";
+    await sendPushNotification({ tokens, title, body });
+  };
+
   const computeDepositBonus = (amount) => {
     if (!storeSettings.depositBonusEnabled) return 0;
     if (storeSettings.depositBonusFlatMode) {
@@ -626,6 +633,7 @@ export default function App() {
               lineUrl={storeSettings.lineUrl || ""}
               storeSettings={storeSettings}
               onSaveStoreSettings={handleSaveStoreSettings}
+              onSendPush={handleSendPush}
             />
             <div className="max-w-md mx-auto px-4 pb-6">
               <button
