@@ -198,6 +198,32 @@ function PhoneVerifyGate({ expectedPhone, onVerified }) {
   );
 }
 
+// Turns a horizontal logo image into a square icon (for the home-screen
+// icon), by centering it on a padded square canvas. Returns a Promise of a
+// data URL.
+function padLogoToSquareIcon(logoDataUrl, size = 512, background = "#FBF7F0") {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = background;
+      ctx.fillRect(0, 0, size, size);
+      const pad = size * 0.15;
+      const maxW = size - pad * 2;
+      const maxH = size - pad * 2;
+      const scale = Math.min(maxW / img.width, maxH / img.height, 1);
+      const w = img.width * scale;
+      const h = img.height * scale;
+      ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+      resolve(canvas.toDataURL("image/png"));
+    };
+    img.src = logoDataUrl;
+  });
+}
+
 export default function App() {
   const [mode] = useState(modeFromPath);
 
@@ -218,6 +244,42 @@ export default function App() {
   useEffect(() => {
     getStoreSettings().then(setStoreSettingsState);
   }, [mode]);
+
+  // Whenever branding changes, update the home-screen ("Add to Home
+  // Screen") icon: the square icon if the store uploaded one, or the
+  // horizontal logo padded into a square, or fall back to PicoPay's own
+  // icon if nothing is configured.
+  useEffect(() => {
+    let cancelled = false;
+    const apply = async () => {
+      let iconUrl = null;
+      if (storeSettings.brandMode === "iconName" && storeSettings.iconImage) {
+        iconUrl = storeSettings.iconImage;
+      } else if (storeSettings.brandMode === "logo" && storeSettings.logoImage) {
+        iconUrl = await padLogoToSquareIcon(storeSettings.logoImage);
+      }
+      if (cancelled) return;
+      const favicon = iconUrl || "/favicon.svg";
+      document.getElementById("app-favicon")?.setAttribute("href", favicon);
+      document.getElementById("app-touch-icon")?.setAttribute("href", favicon);
+
+      const manifest = {
+        name: storeSettings.storeName || "PicoPay",
+        short_name: storeSettings.storeName || "PicoPay",
+        start_url: "/store",
+        display: "standalone",
+        background_color: "#FBF7F0",
+        theme_color: "#0E6E5C",
+        icons: [{ src: favicon, sizes: "any", type: iconUrl ? "image/png" : "image/svg+xml" }],
+      };
+      const blob = new Blob([JSON.stringify(manifest)], { type: "application/json" });
+      document.getElementById("app-manifest")?.setAttribute("href", URL.createObjectURL(blob));
+    };
+    apply();
+    return () => {
+      cancelled = true;
+    };
+  }, [storeSettings.brandMode, storeSettings.iconImage, storeSettings.logoImage, storeSettings.storeName]);
 
   // ---- Store-side: the full customer list ----
   const [customers, setCustomers] = useState([]);
