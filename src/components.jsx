@@ -856,27 +856,19 @@ function ChargeScreen({ onCharge, onDeduct }) {
 
 
 // ---------------- CUSTOMER REGISTRATION ----------------
-function CustomerRegistration({ onDone, onRegister }) {
+function CustomerRegistration({ onDone, onRegister, existingCustomers }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [issueMethod, setIssueMethod] = useState("qr"); // "qr" | "card"
-  const [requireId, setRequireId] = useState(false);
-  const [smsSent, setSmsSent] = useState(false);
-  const [smsCode, setSmsCode] = useState("");
-  const [smsVerified, setSmsVerified] = useState(false);
+  const [requireVerification, setRequireVerification] = useState(true);
   const [notify, setNotify] = useState({ email: true, line: true });
   const [lineLinked, setLineLinked] = useState(false);
   const [issued, setIssued] = useState(null);
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState(null);
 
-  const canSubmit = name.trim().length > 0 && phone.trim().length > 0 && (!requireId || smsVerified);
-
-  const sendSms = () => setSmsSent(true);
-  const verifySms = () => {
-    if (smsCode.length >= 4) setSmsVerified(true);
-  };
+  const canSubmit = name.trim().length > 0 && phone.trim().length > 0;
 
   // Normalize common Japanese phone input ("090 1234 5678", "090-1234-5678")
   // into E.164 format ("+819012345678") since that's what Firebase phone
@@ -889,10 +881,22 @@ function CustomerRegistration({ onDone, onRegister }) {
   };
 
   const issue = async () => {
-    setIssuing(true);
     setIssueError(null);
+    const normalizedPhone = normalizePhone(phone);
+    const trimmedEmail = email.trim();
+    const phoneTaken = (existingCustomers || []).some((c) => c.phone === normalizedPhone);
+    const emailTaken = trimmedEmail && (existingCustomers || []).some((c) => c.email === trimmedEmail);
+    if (phoneTaken) {
+      setIssueError("この電話番号は既に登録されています");
+      return;
+    }
+    if (emailTaken) {
+      setIssueError("このメールアドレスは既に登録されています");
+      return;
+    }
+    setIssuing(true);
     try {
-      const customerId = await onRegister({ name, phone: normalizePhone(phone), email });
+      const customerId = await onRegister({ name, phone: normalizedPhone, email, requireVerification });
       setIssued(customerId);
     } catch (e) {
       setIssueError(e?.message || "登録に失敗しました。もう一度お試しください");
@@ -900,6 +904,7 @@ function CustomerRegistration({ onDone, onRegister }) {
       setIssuing(false);
     }
   };
+
 
   if (issued) {
     const setupUrl = `${window.location.origin}/customer?id=${issued}`;
@@ -975,7 +980,7 @@ function CustomerRegistration({ onDone, onRegister }) {
         />
         <input
           value={phone}
-          onChange={(e) => { setPhone(e.target.value); setSmsSent(false); setSmsVerified(false); }}
+          onChange={(e) => setPhone(e.target.value)}
           placeholder="電話番号(必須・例: +819012345678)"
           className="w-full rounded-lg px-3 py-2 text-sm outline-none"
           style={{ background: C.cream, color: C.ink }}
@@ -1014,56 +1019,13 @@ function CustomerRegistration({ onDone, onRegister }) {
         <span>本人確認を必須にする(SMS認証)</span>
         <input
           type="checkbox"
-          checked={requireId}
-          onChange={(e) => { setRequireId(e.target.checked); setSmsSent(false); setSmsVerified(false); }}
+          checked={requireVerification}
+          onChange={(e) => setRequireVerification(e.target.checked)}
         />
       </label>
-
-      {requireId && (
-        <div className="mt-2 rounded-xl p-3" style={{ background: C.cream }}>
-          {!smsVerified ? (
-            <>
-              <div className="flex gap-2">
-                <div className="flex-1 flex items-center rounded-lg" style={{ background: "#fff" }}>
-                  <input
-                    value={smsCode}
-                    onChange={(e) => setSmsCode(e.target.value)}
-                    disabled={!smsSent}
-                    placeholder={smsSent ? "認証コード(4桁)" : "電話番号を入力してから送信"}
-                    className="w-full bg-transparent px-3 py-2 text-sm outline-none disabled:opacity-50"
-                    style={{ color: C.ink }}
-                  />
-                </div>
-                {!smsSent ? (
-                  <button
-                    onClick={sendSms}
-                    disabled={!phone.trim()}
-                    className="rounded-lg px-3 text-[11px] font-semibold"
-                    style={{ background: phone.trim() ? C.teal : C.line, color: phone.trim() ? "#fff" : C.mute }}
-                  >
-                    SMS送信
-                  </button>
-                ) : (
-                  <button
-                    onClick={verifySms}
-                    className="rounded-lg px-3 text-[11px] font-semibold"
-                    style={{ background: C.teal, color: "#fff" }}
-                  >
-                    確認
-                  </button>
-                )}
-              </div>
-              {smsSent && (
-                <div className="text-[10px] mt-1" style={{ color: C.mute }}>
-                  (デモ)送信しました。コードは何でも4桁以上入力すれば認証できます
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="text-[12px] font-semibold" style={{ color: C.teal }}>✓ SMS認証済み</div>
-          )}
-        </div>
-      )}
+      <div className="text-[10px] mt-1" style={{ color: C.mute }}>
+        オンにすると、お客様が初めてPicoPayを開く際にご自身のスマホでSMS認証が必要になります(お店側での操作は不要です)
+      </div>
 
       <div className="mt-2 text-[11px] font-semibold" style={{ color: C.ink }}>通知設定</div>
       <div className="mt-1 flex gap-3 text-[12px]" style={{ color: C.ink }}>
@@ -1197,6 +1159,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
+  const [customerSearch, setCustomerSearch] = useState("");
 
   return (
     <div className="max-w-md mx-auto px-4 pb-24">
@@ -1312,8 +1275,17 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
             <CustomerRegistration
               onRegister={onRegisterCustomer}
               onDone={() => setShowRegister(false)}
+              existingCustomers={customers}
             />
           )}
+
+          <input
+            value={customerSearch}
+            onChange={(e) => setCustomerSearch(e.target.value)}
+            placeholder="名前・お客様ID・電話番号で検索"
+            className="mt-2 w-full rounded-lg px-3 py-2 text-sm outline-none"
+            style={{ background: C.cream, color: C.ink }}
+          />
 
           <div className="mt-2 rounded-xl overflow-hidden" style={{ border: `1px solid ${C.line}` }}>
             {customers.length === 0 && (
@@ -1321,7 +1293,27 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
                 まだ登録されたお客様がいません
               </div>
             )}
-            {[...customers].sort((a, b) => a.name.localeCompare(b.name, "ja")).map((c, i) => (
+            {customers.length > 0 && (() => {
+              const q = customerSearch.trim().toLowerCase();
+              const filtered = customers
+                .filter(
+                  (c) =>
+                    !q ||
+                    (c.name || "").toLowerCase().includes(q) ||
+                    (c.id || "").toLowerCase().includes(q) ||
+                    (c.phone || "").toLowerCase().includes(q)
+                )
+                .sort((a, b) => (a.name || "").localeCompare(b.name || "", "ja"));
+
+              if (filtered.length === 0) {
+                return (
+                  <div className="px-3 py-4 text-center text-[12px]" style={{ background: C.paper, color: C.mute }}>
+                    該当するお客様が見つかりません
+                  </div>
+                );
+              }
+
+              return filtered.map((c, i) => (
               <React.Fragment key={c.id}>
                 <button
                   onClick={() => setExpandedId(expandedId === c.id ? null : c.id)}
@@ -1350,7 +1342,8 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
                   <CustomerDetailPanel customerId={c.id} onFetch={onFetchCustomerDetail} />
                 )}
               </React.Fragment>
-            ))}
+              ));
+            })()}
           </div>
         </>
       )}
