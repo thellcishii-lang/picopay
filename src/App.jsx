@@ -13,6 +13,7 @@ import {
   setCustomerStatus,
   deleteCustomerPermanently,
   reissueCustomerAccess,
+  requestPushToken,
   DEFAULT_ACCOUNT,
   auth,
   subscribeToAuth,
@@ -342,6 +343,36 @@ export default function App() {
     return next;
   };
 
+  // For the customer updating their own profile (e.g. notification
+  // preferences) — no store-side customer-list refresh needed here, and a
+  // suspended/blacklisted customer should still be able to change this.
+  const applyToOwnAccount = async (customerId, updater) => {
+    const current = await getAccountOnce(customerId);
+    const next = updater(current);
+    await saveAccount(customerId, next);
+    return next;
+  };
+
+  const handleUpdateNotifyPrefs = async (customerId, prefs) => {
+    let pushToken = null;
+    if (prefs.push) {
+      pushToken = await requestPushToken();
+      if (!pushToken) {
+        // Permission denied, or the browser doesn't support push — keep the
+        // checkbox state the customer chose, but there's no token to save,
+        // so nothing will actually be deliverable until they allow it.
+      }
+    }
+    await applyToOwnAccount(customerId, (prev) => {
+      const existingTokens = prev.pushTokens || [];
+      const nextTokens =
+        prefs.push && pushToken && !existingTokens.includes(pushToken)
+          ? [...existingTokens, pushToken]
+          : existingTokens;
+      return { ...prev, notifyOptIn: prefs, pushTokens: nextTokens };
+    });
+  };
+
   const computeDepositBonus = (amount) => {
     if (!storeSettings.depositBonusEnabled) return 0;
     if (storeSettings.depositBonusFlatMode) {
@@ -665,6 +696,8 @@ export default function App() {
           rankingEnabled={rankingEnabled}
           customerId={myCustomerId}
           storeSettings={storeSettings}
+          notifyOptIn={account.notifyOptIn || null}
+          onUpdateNotifyPrefs={(prefs) => handleUpdateNotifyPrefs(myCustomerId, prefs)}
         />
       )}
     </div>
