@@ -194,6 +194,7 @@ export async function listCustomers() {
     phone: acc.profile?.phone || null,
     email: acc.profile?.email || null,
     balance: (acc.pointBalance || 0) + (acc.depositBalance || 0),
+    notifyOptIn: acc.notifyOptIn || null,
   }));
 }
 
