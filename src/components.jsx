@@ -67,16 +67,30 @@ const BRANDING_SIZES = {
   heroHeight: 280, // px — recommended height for the customer-side hero banner
 };
 
-function GachaSettings() {
-  const [rows, setRows] = useState([
-    { id: 1, rate: 5, weight: 50 },
-    { id: 2, rate: 10, weight: 30 },
-    { id: 3, rate: 15, weight: 15 },
-    { id: 4, rate: 20, weight: 5 },
-  ]);
+function GachaSettings({ storeSettings, onSave }) {
+  const [gachaEnabled, setGachaEnabled] = useState(storeSettings.gachaEnabled ?? true);
+  const [normalRows, setNormalRows] = useState(
+    storeSettings.gachaNormalRows || [
+      { id: 1, rate: 5, weight: 50 },
+      { id: 2, rate: 10, weight: 30 },
+      { id: 3, rate: 15, weight: 15 },
+      { id: 4, rate: 20, weight: 5 },
+    ]
+  );
+  const [rainRows, setRainRows] = useState(
+    storeSettings.gachaRainRows || [
+      { id: 1, rate: 10, weight: 40 },
+      { id: 2, rate: 20, weight: 40 },
+      { id: 3, rate: 30, weight: 20 },
+    ]
+  );
   const [mode, setModeSet] = useState("normal");
-  const [zeroMsg, setZeroMsg] = useState("positive");
-  const [freq, setFreq] = useState("daily");
+  const [zeroMsg, setZeroMsg] = useState(storeSettings.gachaZeroMsg || "positive");
+  const [freq, setFreq] = useState(storeSettings.gachaFreq || "daily");
+  const [saved, setSaved] = useState(false);
+
+  const rows = mode === "rain" ? rainRows : normalRows;
+  const setRows = mode === "rain" ? setRainRows : setNormalRows;
   const totalWeight = rows.reduce((s, r) => s + Number(r.weight || 0), 0);
 
   const update = (id, key, value) => {
@@ -87,154 +101,306 @@ function GachaSettings() {
   };
   const removeRow = (id) => setRows((rs) => rs.filter((r) => r.id !== id));
 
+  const save = async () => {
+    await onSave({
+      gachaEnabled,
+      gachaNormalRows: normalRows,
+      gachaRainRows: rainRows,
+      gachaZeroMsg: zeroMsg,
+      gachaFreq: freq,
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
   return (
     <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
-      <div className="flex items-center gap-2">
-        <Sparkles size={16} style={{ color: C.coral }} />
-        <span className="text-sm font-bold" style={{ color: C.ink }}>ガチャ倍率設定</span>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Sparkles size={16} style={{ color: C.coral }} />
+          <span className="text-sm font-bold" style={{ color: C.ink }}>入金ガチャ</span>
+        </div>
+        <button
+          onClick={() => setGachaEnabled(!gachaEnabled)}
+          className="relative w-11 h-6 rounded-full transition-colors shrink-0"
+          style={{ background: gachaEnabled ? C.teal : C.line }}
+        >
+          <span
+            className="absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform"
+            style={{ transform: gachaEnabled ? "translateX(22px)" : "translateX(2px)" }}
+          />
+        </button>
       </div>
       <div className="text-[11px] mt-1" style={{ color: C.mute }}>
-        当選率(ボーナス%)ごとの出現ウェイトを自由に設定できます。ハズレを作りたい場合は0%の行を追加してください。
+        {gachaEnabled
+          ? "オフにすると、お客様画面からもガチャが消えます"
+          : "オフ:お客様画面にガチャは表示されません"}
       </div>
 
-      {/* Mode switch */}
-      <div className="mt-3 flex rounded-full p-0.5 w-fit" style={{ background: C.cream }}>
-        {[
-          { key: "normal", label: "通常テーブル" },
-          { key: "rain", label: "雨の日テーブル" },
-        ].map((m) => (
-          <button
-            key={m.key}
-            onClick={() => setModeSet(m.key)}
-            className="px-3 py-1.5 rounded-full text-xs font-semibold transition"
-            style={mode === m.key ? { background: C.teal, color: "#fff" } : { color: C.mute }}
-          >
-            {m.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Table header */}
-      <div className="mt-3 grid grid-cols-12 gap-2 text-[10px] font-semibold px-1" style={{ color: C.mute }}>
-        <div className="col-span-4">ボーナス率</div>
-        <div className="col-span-5">出現ウェイト</div>
-        <div className="col-span-2">確率</div>
-        <div className="col-span-1"></div>
-      </div>
-
-      <div className="mt-1 space-y-2">
-        {rows.map((r) => (
-          <div key={r.id} className="grid grid-cols-12 gap-2 items-center">
-            <div className="col-span-4 flex items-center rounded-lg" style={{ background: C.cream }}>
-              <input
-                type="number"
-                value={r.rate}
-                onChange={(e) => update(r.id, "rate", e.target.value)}
-                className="w-full bg-transparent px-2 py-2 text-sm font-semibold outline-none"
-                style={{ color: C.ink }}
-              />
-              <span className="pr-2 text-sm font-semibold" style={{ color: C.mute }}>%</span>
-            </div>
-            <div className="col-span-5 rounded-lg" style={{ background: C.cream }}>
-              <input
-                type="number"
-                value={r.weight}
-                onChange={(e) => update(r.id, "weight", e.target.value)}
-                className="w-full bg-transparent px-2 py-2 text-sm font-semibold outline-none"
-                style={{ color: C.ink }}
-              />
-            </div>
-            <div className="col-span-2 text-xs font-bold" style={{ color: C.teal }}>
-              {totalWeight > 0 ? `${Math.round((Number(r.weight) / totalWeight) * 100)}%` : "-"}
-            </div>
-            <button
-              className="col-span-1 text-xs"
-              style={{ color: C.mute }}
-              onClick={() => removeRow(r.id)}
-            >
-              ×
-            </button>
+      {gachaEnabled && (
+        <>
+          <div className="text-[11px] mt-3" style={{ color: C.mute }}>
+            当選率(ボーナス%)ごとの出現ウェイトを自由に設定できます。ハズレを作りたい場合は0%の行を追加してください。
           </div>
-        ))}
-      </div>
+
+          {/* Mode switch */}
+          <div className="mt-3 flex rounded-full p-0.5 w-fit" style={{ background: C.cream }}>
+            {[
+              { key: "normal", label: "通常テーブル" },
+              { key: "rain", label: "雨の日テーブル" },
+            ].map((m) => (
+              <button
+                key={m.key}
+                onClick={() => setModeSet(m.key)}
+                className="px-3 py-1.5 rounded-full text-xs font-semibold transition"
+                style={mode === m.key ? { background: C.teal, color: "#fff" } : { color: C.mute }}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Table header */}
+          <div className="mt-3 grid grid-cols-12 gap-2 text-[10px] font-semibold px-1" style={{ color: C.mute }}>
+            <div className="col-span-4">ボーナス率</div>
+            <div className="col-span-5">出現ウェイト</div>
+            <div className="col-span-2">確率</div>
+            <div className="col-span-1"></div>
+          </div>
+
+          <div className="mt-1 space-y-2">
+            {rows.map((r) => (
+              <div key={r.id} className="grid grid-cols-12 gap-2 items-center">
+                <div className="col-span-4 flex items-center rounded-lg" style={{ background: C.cream }}>
+                  <input
+                    type="number"
+                    value={r.rate}
+                    onChange={(e) => update(r.id, "rate", e.target.value)}
+                    className="w-full bg-transparent px-2 py-2 text-sm font-semibold outline-none"
+                    style={{ color: C.ink }}
+                  />
+                  <span className="pr-2 text-sm font-semibold" style={{ color: C.mute }}>%</span>
+                </div>
+                <div className="col-span-5 rounded-lg" style={{ background: C.cream }}>
+                  <input
+                    type="number"
+                    value={r.weight}
+                    onChange={(e) => update(r.id, "weight", e.target.value)}
+                    className="w-full bg-transparent px-2 py-2 text-sm font-semibold outline-none"
+                    style={{ color: C.ink }}
+                  />
+                </div>
+                <div className="col-span-2 text-xs font-bold" style={{ color: C.teal }}>
+                  {totalWeight > 0 ? `${Math.round((Number(r.weight) / totalWeight) * 100)}%` : "-"}
+                </div>
+                <button
+                  className="col-span-1 text-xs"
+                  style={{ color: C.mute }}
+                  onClick={() => removeRow(r.id)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <button
+            onClick={addRow}
+            className="mt-3 flex items-center gap-1 text-xs font-semibold"
+            style={{ color: C.teal }}
+          >
+            <Plus size={13} /> 行を追加
+          </button>
+
+          {/* Live preview bar */}
+          <div className="mt-4">
+            <div className="text-[10px] font-semibold mb-1" style={{ color: C.mute }}>出現割合プレビュー</div>
+            <div className="h-3 rounded-full overflow-hidden flex" style={{ background: C.cream }}>
+              {rows.map((r, i) => (
+                <div
+                  key={r.id}
+                  style={{
+                    width: totalWeight > 0 ? `${(Number(r.weight) / totalWeight) * 100}%` : 0,
+                    background: i % 2 === 0 ? C.teal : C.coral,
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+
+          {/* 0% outcome messaging */}
+          <div className="mt-4 rounded-xl p-3" style={{ background: C.cream }}>
+            <div className="text-[11px] font-semibold" style={{ color: C.ink }}>0%(ハズレ)が出た時の演出</div>
+            <div className="mt-2 flex gap-2">
+              {[
+                { key: "positive", label: "やったー!景品だよ!" },
+                { key: "negative", label: "残高😭次回に期待してね!" },
+              ].map((o) => (
+                <button
+                  key={o.key}
+                  onClick={() => setZeroMsg(o.key)}
+                  className="flex-1 rounded-lg py-2 text-[11px] font-semibold"
+                  style={
+                    zeroMsg === o.key
+                      ? { background: C.teal, color: "#fff" }
+                      : { background: "#fff", color: C.mute, border: `1px solid ${C.line}` }
+                  }
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Charge frequency condition */}
+          <div className="mt-3 rounded-xl p-3" style={{ background: C.cream }}>
+            <div className="text-[11px] font-semibold" style={{ color: C.ink }}>ボーナス適用条件</div>
+            <div className="mt-2 flex gap-2">
+              {[
+                { key: "daily", label: "1日1回まで" },
+                { key: "triple", label: "1日3回まで" },
+              ].map((o) => (
+                <button
+                  key={o.key}
+                  onClick={() => setFreq(o.key)}
+                  className="flex-1 rounded-lg py-2 text-[11px] font-semibold"
+                  style={
+                    freq === o.key
+                      ? { background: C.teal, color: "#fff" }
+                      : { background: "#fff", color: C.mute, border: `1px solid ${C.line}` }
+                  }
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
 
       <button
-        onClick={addRow}
-        className="mt-3 flex items-center gap-1 text-xs font-semibold"
-        style={{ color: C.teal }}
-      >
-        <Plus size={13} /> 行を追加
-      </button>
-
-      {/* Live preview bar */}
-      <div className="mt-4">
-        <div className="text-[10px] font-semibold mb-1" style={{ color: C.mute }}>出現割合プレビュー</div>
-        <div className="h-3 rounded-full overflow-hidden flex" style={{ background: C.cream }}>
-          {rows.map((r, i) => (
-            <div
-              key={r.id}
-              style={{
-                width: totalWeight > 0 ? `${(Number(r.weight) / totalWeight) * 100}%` : 0,
-                background: i % 2 === 0 ? C.teal : C.coral,
-              }}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* 0% outcome messaging */}
-      <div className="mt-4 rounded-xl p-3" style={{ background: C.cream }}>
-        <div className="text-[11px] font-semibold" style={{ color: C.ink }}>0%(ハズレ)が出た時の演出</div>
-        <div className="mt-2 flex gap-2">
-          {[
-            { key: "positive", label: "やったー!景品だよ!" },
-            { key: "negative", label: "残高😭次回に期待してね!" },
-          ].map((o) => (
-            <button
-              key={o.key}
-              onClick={() => setZeroMsg(o.key)}
-              className="flex-1 rounded-lg py-2 text-[11px] font-semibold"
-              style={
-                zeroMsg === o.key
-                  ? { background: C.teal, color: "#fff" }
-                  : { background: "#fff", color: C.mute, border: `1px solid ${C.line}` }
-              }
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Charge frequency condition */}
-      <div className="mt-3 rounded-xl p-3" style={{ background: C.cream }}>
-        <div className="text-[11px] font-semibold" style={{ color: C.ink }}>ボーナス適用条件</div>
-        <div className="mt-2 flex gap-2">
-          {[
-            { key: "daily", label: "1日1回まで" },
-            { key: "triple", label: "1日3回まで" },
-          ].map((o) => (
-            <button
-              key={o.key}
-              onClick={() => setFreq(o.key)}
-              className="flex-1 rounded-lg py-2 text-[11px] font-semibold"
-              style={
-                freq === o.key
-                  ? { background: C.teal, color: "#fff" }
-                  : { background: "#fff", color: C.mute, border: `1px solid ${C.line}` }
-              }
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <button
+        onClick={save}
         className="mt-4 w-full rounded-full py-2.5 text-sm font-bold"
         style={{ background: C.teal, color: "#fff" }}
       >
-        {mode === "rain" ? "雨の日テーブルを保存" : "通常テーブルを保存"}
+        {saved ? "✓ 保存しました" : gachaEnabled ? (mode === "rain" ? "雨の日テーブルを保存" : "通常テーブルを保存") : "保存"}
+      </button>
+    </div>
+  );
+}
+
+// ---------------- DEPOSIT BONUS SETTINGS (plain, non-gacha, tiered by amount) ----------------
+function DepositBonusSettings({ storeSettings, onSave }) {
+  const [enabled, setEnabled] = useState(storeSettings.depositBonusEnabled ?? false);
+  const [flatMode, setFlatMode] = useState(storeSettings.depositBonusFlatMode ?? true);
+  const [flatRate, setFlatRate] = useState(storeSettings.depositBonusFlatRate ?? 5);
+  const [tiers, setTiers] = useState(
+    storeSettings.depositBonusTiers || [
+      { upTo: 5000, rate: 3 },
+      { upTo: 10000, rate: 5 },
+      { upTo: null, rate: 8 }, // null upTo = 上限なし(それ以上)
+    ]
+  );
+  const [saved, setSaved] = useState(false);
+
+  const updateTier = (i, key, value) => {
+    setTiers((ts) => ts.map((t, idx) => (idx === i ? { ...t, [key]: value } : t)));
+  };
+
+  const save = async () => {
+    await onSave({
+      depositBonusEnabled: enabled,
+      depositBonusFlatMode: flatMode,
+      depositBonusFlatRate: Number(flatRate),
+      depositBonusTiers: tiers,
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  return (
+    <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-bold" style={{ color: C.ink }}>入金ボーナス(通常付与)</div>
+        <button
+          onClick={() => setEnabled(!enabled)}
+          className="relative w-11 h-6 rounded-full transition-colors shrink-0"
+          style={{ background: enabled ? C.teal : C.line }}
+        >
+          <span
+            className="absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform"
+            style={{ transform: enabled ? "translateX(22px)" : "translateX(2px)" }}
+          />
+        </button>
+      </div>
+      <div className="text-[11px] mt-1" style={{ color: C.mute }}>
+        ガチャの抽選とは別に、チャージのたびに確実にポイントが付与される仕組みです
+      </div>
+
+      {enabled && (
+        <>
+          <label className="mt-3 flex items-center justify-between text-[12px] rounded-xl p-3" style={{ background: C.cream, color: C.ink }}>
+            <span>全ての入金に一律の還元率をつける</span>
+            <input type="checkbox" checked={flatMode} onChange={(e) => setFlatMode(e.target.checked)} />
+          </label>
+
+          {flatMode ? (
+            <div className="mt-2 flex items-center rounded-lg" style={{ background: C.cream }}>
+              <input
+                type="number"
+                value={flatRate}
+                onChange={(e) => setFlatRate(e.target.value)}
+                className="w-full bg-transparent px-3 py-2 text-sm font-semibold outline-none"
+                style={{ color: C.ink }}
+              />
+              <span className="pr-3 text-xs font-semibold" style={{ color: C.mute }}>% (全ての入金額に適用)</span>
+            </div>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {tiers.map((t, i) => (
+                <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                  <div className="col-span-7 flex items-center rounded-lg" style={{ background: C.cream }}>
+                    {t.upTo === null ? (
+                      <span className="px-3 py-2 text-sm" style={{ color: C.mute }}>それ以上</span>
+                    ) : (
+                      <>
+                        <input
+                          type="number"
+                          value={t.upTo}
+                          onChange={(e) => updateTier(i, "upTo", Number(e.target.value))}
+                          className="w-full bg-transparent px-3 py-2 text-sm font-semibold outline-none"
+                          style={{ color: C.ink }}
+                        />
+                        <span className="pr-3 text-xs font-semibold" style={{ color: C.mute }}>円まで</span>
+                      </>
+                    )}
+                  </div>
+                  <div className="col-span-5 flex items-center rounded-lg" style={{ background: C.cream }}>
+                    <input
+                      type="number"
+                      value={t.rate}
+                      onChange={(e) => updateTier(i, "rate", Number(e.target.value))}
+                      className="w-full bg-transparent px-2 py-2 text-sm font-semibold outline-none"
+                      style={{ color: C.ink }}
+                    />
+                    <span className="pr-2 text-xs font-semibold" style={{ color: C.mute }}>%</span>
+                  </div>
+                </div>
+              ))}
+              <div className="text-[10px]" style={{ color: C.mute }}>
+                ※チャージ額に応じて、該当する一番上の段階の還元率が適用されます
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      <button
+        onClick={save}
+        className="mt-4 w-full rounded-full py-2.5 text-sm font-bold"
+        style={{ background: C.teal, color: "#fff" }}
+      >
+        {saved ? "✓ 保存しました" : "保存"}
       </button>
     </div>
   );
@@ -1964,6 +2130,16 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
             <div className="rounded-2xl bg-white p-6">
               <QRCodeSVG value={lineUrl} size={220} level="M" />
             </div>
+            <button
+              onClick={() => {
+                setShowLineQrModal(false);
+                setTab("settings");
+              }}
+              className="mt-4 rounded-full px-5 py-2 text-xs font-semibold"
+              style={{ background: "rgba(255,255,255,0.2)", color: "#fff" }}
+            >
+              LINE URLを変更する
+            </button>
           </div>
         </div>
       )}
@@ -2112,7 +2288,8 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
 
       {tab === "settings" && (
         <>
-          <GachaSettings />
+          <GachaSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+          <DepositBonusSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <PointSettings />
           <RankSettings rankingEnabled={rankingEnabled} setRankingEnabled={setRankingEnabled} />
           <SystemSafetySettings />
@@ -2246,6 +2423,7 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
       </div>
 
       {/* Gacha */}
+      {storeSettings.gachaEnabled !== false && (
       <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
         <div className="flex items-center gap-2">
           <div
@@ -2305,6 +2483,7 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
           </button>
         </div>
       </div>
+      )}
 
       {/* History */}
       <div className="mt-4 flex items-center gap-2">
