@@ -418,6 +418,16 @@ export default function App() {
     }
   };
 
+  const computePurchasePoints = (amount) => {
+    if (!storeSettings.purchasePointEnabled) return 0;
+    if (storeSettings.purchasePointFlatMode) {
+      return Math.round(amount * ((storeSettings.purchasePointFlatRate || 0) / 100));
+    }
+    const tiers = storeSettings.purchasePointTiers || [];
+    const tier = tiers.find((t) => t.upTo === null || amount <= t.upTo) || tiers[tiers.length - 1];
+    return tier ? Math.round(amount * ((tier.rate || 0) / 100)) : 0;
+  };
+
   const handleDeduct = (amount, customerId) => {
     if (!customerId) return Promise.resolve();
     return applyToAccount(customerId, (prev) => {
@@ -426,22 +436,32 @@ export default function App() {
       remaining -= usedPoints;
       const usedDeposit = Math.min(prev.depositBalance || 0, remaining);
       const newDeposit = Math.max(0, (prev.depositBalance || 0) - remaining);
+      const earnedPoints = computePurchasePoints(amount);
       const items = [];
       if (usedPoints > 0) items.push({ label: "お会計(ポイント消費分)", amount: -usedPoints });
       if (usedDeposit > 0) items.push({ label: "お会計(預かり金消費分)", amount: -usedDeposit });
+      const history = [
+        {
+          date: "今日",
+          summary: `お会計 -¥${amount.toLocaleString()}`,
+          total: -amount,
+          items,
+        },
+        ...(prev.history || []),
+      ];
+      if (earnedPoints > 0) {
+        history.unshift({
+          date: "今日",
+          summary: "購入ポイント付与",
+          total: earnedPoints,
+          items: [{ label: "購入ポイント", amount: earnedPoints }],
+        });
+      }
       return {
         ...prev,
-        pointBalance: (prev.pointBalance || 0) - usedPoints,
+        pointBalance: (prev.pointBalance || 0) - usedPoints + earnedPoints,
         depositBalance: newDeposit,
-        history: [
-          {
-            date: "今日",
-            summary: `お会計 -¥${amount.toLocaleString()}`,
-            total: -amount,
-            items,
-          },
-          ...(prev.history || []),
-        ],
+        history,
       };
     });
   };
