@@ -87,10 +87,17 @@ const DEFAULT_ACCOUNT = {
 // rules) so the app can decide whether to show the phone verification gate
 // *before* the customer is authenticated (otherwise it's a chicken-and-egg
 // problem: you'd need to be verified to read the data that tells you
-// verification is needed).
-export async function getAccountPhone(customerId) {
-  const snapshot = await get(ref(db, `accounts/${customerId}/profile/phone`));
-  return snapshot.val() || null;
+// verification is needed). Also reads whether verification is required at
+// all for this account (store staff can turn it off per customer).
+export async function getAccountVerificationInfo(customerId) {
+  const [phoneSnap, requireSnap] = await Promise.all([
+    get(ref(db, `accounts/${customerId}/profile/phone`)),
+    get(ref(db, `accounts/${customerId}/requireVerification`)),
+  ]);
+  return {
+    phone: phoneSnap.val() || null,
+    requireVerification: requireSnap.val() !== false, // default true if unset
+  };
 }
 
 // Subscribe to real-time changes for one customer's account.
@@ -128,7 +135,7 @@ export async function saveAccount(customerId, account) {
 // whatever profile fields were collected at registration. `phone` must be a
 // real number (E.164 format, e.g. +819012345678) since it's what the
 // customer will use to verify their identity later.
-export async function createAccount({ name, phone, email }) {
+export async function createAccount({ name, phone, email, requireVerification = true }) {
   if (!phone) throw new Error("電話番号は必須です(お客様の本人確認に使います)");
   const customerId =
     "cust-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
@@ -139,6 +146,7 @@ export async function createAccount({ name, phone, email }) {
     bonusEligible: false,
     history: [],
     profile: { name, phone, email: email || null },
+    requireVerification,
   };
   await set(ref(db, `accounts/${customerId}`), account);
   return customerId;
@@ -151,6 +159,8 @@ export async function listCustomers() {
   return Object.entries(data).map(([id, acc]) => ({
     id,
     name: acc.profile?.name || "(名前未登録)",
+    phone: acc.profile?.phone || null,
+    email: acc.profile?.email || null,
     balance: (acc.pointBalance || 0) + (acc.depositBalance || 0),
   }));
 }
