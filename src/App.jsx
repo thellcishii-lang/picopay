@@ -234,14 +234,6 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // rankingEnabled/weatherEnabled used to be local, per-device state, which
-  // meant toggling them in store settings never actually reached the
-  // customer's screen (each device had its own default). They now live in
-  // the shared storeSettings, same as everything else configurable.
-  const rankingEnabled = storeSettings.rankingEnabled ?? true;
-  const weatherEnabled = storeSettings.weatherEnabled ?? true;
-  const handleSetRankingEnabled = (value) => handleSaveStoreSettings({ rankingEnabled: value });
-  const handleSetWeatherEnabled = (value) => handleSaveStoreSettings({ weatherEnabled: value });
   // Shared branding/settings the store configures once — LINE URL, logo/icon,
   // store name, and the customer-side hero image. Fetched on both sides
   // (store needs it to edit, customer needs it to render their own header).
@@ -249,6 +241,13 @@ export default function App() {
   useEffect(() => {
     getStoreSettings().then(setStoreSettingsState);
   }, [mode]);
+
+  // rankingEnabled/weatherEnabled used to be local, per-device state, which
+  // meant toggling them in store settings never actually reached the
+  // customer's screen (each device had its own default). They now live in
+  // the shared storeSettings, same as everything else configurable.
+  const rankingEnabled = storeSettings.rankingEnabled ?? true;
+  const weatherEnabled = storeSettings.weatherEnabled ?? true;
 
   // Whenever branding changes, update the home-screen ("Add to Home
   // Screen") icon: the square icon if the store uploaded one, or the
@@ -300,6 +299,9 @@ export default function App() {
     await saveStoreSettings(updates);
     setStoreSettingsState((prev) => ({ ...prev, ...updates }));
   };
+
+  const handleSetRankingEnabled = (value) => handleSaveStoreSettings({ rankingEnabled: value });
+  const handleSetWeatherEnabled = (value) => handleSaveStoreSettings({ weatherEnabled: value });
 
   const handleRegisterCustomer = async ({ name, phone, email, requireVerification, referredBy }) => {
     const customerId = await createAccount({ name, phone, email, requireVerification, referredBy });
