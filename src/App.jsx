@@ -4,7 +4,7 @@ import { C, StoreView, CustomerView } from "./components.jsx";
 import {
   subscribeToAccount,
   getAccountOnce,
-  getAccountPhone,
+  getAccountVerificationInfo,
   saveAccount,
   createAccount,
   listCustomers,
@@ -295,18 +295,23 @@ export default function App() {
   const [setupInput, setSetupInput] = useState("");
   const [account, setAccount] = useState(DEFAULT_ACCOUNT);
   const [accountLoaded, setAccountLoaded] = useState(false);
-  // The phone number on file for this account — fetched via a public,
-  // read-only lookup so we can decide whether verification is needed
-  // *before* the customer is authenticated (see getAccountPhone in firebase.js).
+  // The phone number on file for this account, and whether verification is
+  // required at all — fetched via a public, read-only lookup so we can
+  // decide whether the gate is needed *before* the customer is
+  // authenticated (see getAccountVerificationInfo in firebase.js).
   const [myPhone, setMyPhone] = useState(undefined); // undefined = not checked yet, null = no phone on file
+  const [requireVerification, setRequireVerification] = useState(true);
   // Has this device's phone been verified against this account's phone yet?
   const [phoneVerified, setPhoneVerified] = useState(false);
 
   useEffect(() => {
     if (mode !== "customer" || !myCustomerId) return;
     let cancelled = false;
-    getAccountPhone(myCustomerId).then((phone) => {
-      if (!cancelled) setMyPhone(phone);
+    getAccountVerificationInfo(myCustomerId).then(({ phone, requireVerification }) => {
+      if (!cancelled) {
+        setMyPhone(phone);
+        setRequireVerification(requireVerification);
+      }
     });
     return () => {
       cancelled = true;
@@ -314,14 +319,14 @@ export default function App() {
   }, [mode, myCustomerId]);
 
   // If this browser session's Firebase Auth phone number already matches the
-  // account's registered phone (or there's no phone on file at all), skip
+  // account's registered phone, or verification isn't required at all, skip
   // the verification screen and load the real account data.
   useEffect(() => {
     if (myPhone === undefined) return; // still checking
-    if (!myPhone || authUser?.phoneNumber === myPhone) {
+    if (!myPhone || !requireVerification || authUser?.phoneNumber === myPhone) {
       setPhoneVerified(true);
     }
-  }, [myPhone, authUser]);
+  }, [myPhone, requireVerification, authUser]);
 
   useEffect(() => {
     if (mode !== "customer" || !myCustomerId || !phoneVerified) return;
