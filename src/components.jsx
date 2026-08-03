@@ -2095,13 +2095,12 @@ function BroadcastPanel({ customers, storeSettings, onSave, onSendPush, storeSec
   const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [keyError, setKeyError] = useState(null);
 
-  const [showLoginSetup, setShowLoginSetup] = useState(false);
-  const [loginChannelIdDraft, setLoginChannelIdDraft] = useState("");
-  const [loginChannelSecretDraft, setLoginChannelSecretDraft] = useState("");
-  const [loginError, setLoginError] = useState(null);
+  const [showLiffSetup, setShowLiffSetup] = useState(false);
+  const [liffIdDraft, setLiffIdDraft] = useState("");
+  const [liffError, setLiffError] = useState(null);
 
   const lineApiKey = storeSecrets.lineApiKey || "";
-  const lineLoginChannelId = storeSettings.lineLoginChannelId || "";
+  const lineLiffId = storeSettings.lineLiffId || "";
 
   const submitApiKey = async () => {
     setKeyError(null);
@@ -2116,17 +2115,15 @@ function BroadcastPanel({ customers, storeSettings, onSave, onSendPush, storeSec
     setShowLineSetup(false);
   };
 
-  const submitLoginChannel = async () => {
-    setLoginError(null);
-    if (!loginChannelIdDraft.trim() || loginChannelSecretDraft.trim().length < 10) {
-      setLoginError("Channel IDとChannel Secretの両方を、LINE Developersの画面からコピーして入力してください");
+  const submitLiffId = async () => {
+    setLiffError(null);
+    if (!liffIdDraft.trim()) {
+      setLiffError("LINE DevelopersのLIFFタブに表示されているLIFF IDを入力してください");
       return;
     }
-    await onSave({ lineLoginChannelId: loginChannelIdDraft.trim() });
-    await onSaveSecrets({ lineLoginChannelSecret: loginChannelSecretDraft.trim() });
-    setLoginChannelIdDraft("");
-    setLoginChannelSecretDraft("");
-    setShowLoginSetup(false);
+    await onSave({ lineLiffId: liffIdDraft.trim() });
+    setLiffIdDraft("");
+    setShowLiffSetup(false);
   };
 
   return (
@@ -2181,42 +2178,35 @@ function BroadcastPanel({ customers, storeSettings, onSave, onSendPush, storeSec
 
         <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
             <div className="text-[11px] font-semibold" style={{ color: C.ink }}>
-              お客様とLINEアカウントの紐付け(LINEログイン連携)
+              お客様とLINEアカウントの紐付け(LIFF連携)
             </div>
             <div className="text-[10px] mt-1" style={{ color: C.mute }}>
-              「どのお客様が友だち追加したか」を特定するために、LINEログイン用のチャネルを別途1つ登録する必要があります(Messaging APIのチャネルとは別物です)。LINE Developersで「LINEログイン」チャネルを作成し、Channel IDとChannel Secretを入力してください。
+              「どのお客様が友だち追加したか」を特定するために、LINEログインチャネルの中の「LIFF」タブでLIFFアプリを1つ登録し(エンドポイントURLは{`{`}このサイトのURL{`}`}/customer)、発行されたLIFF IDを入力してください。
             </div>
-            {lineLoginChannelId ? (
+            {lineLiffId ? (
               <div className="mt-2 text-[11px] font-semibold" style={{ color: C.teal }}>✓ 連携設定済み</div>
-            ) : !showLoginSetup ? (
+            ) : !showLiffSetup ? (
               <button
-                onClick={() => setShowLoginSetup(true)}
+                onClick={() => setShowLiffSetup(true)}
                 className="mt-2 w-full rounded-full py-2 text-xs font-semibold"
                 style={{ background: C.cream, color: C.ink }}
               >
-                LINEログイン連携を設定する
+                LIFF連携を設定する
               </button>
             ) : (
               <div className="mt-2 space-y-2">
                 <input
-                  value={loginChannelIdDraft}
-                  onChange={(e) => setLoginChannelIdDraft(e.target.value)}
-                  placeholder="Channel ID"
+                  value={liffIdDraft}
+                  onChange={(e) => setLiffIdDraft(e.target.value)}
+                  placeholder="LIFF ID(例: 1234567890-AbCdEfGh)"
                   className="w-full rounded-lg px-3 py-2 text-sm outline-none"
                   style={{ background: C.cream, color: C.ink }}
                 />
-                <input
-                  value={loginChannelSecretDraft}
-                  onChange={(e) => setLoginChannelSecretDraft(e.target.value)}
-                  placeholder="Channel Secret"
-                  className="w-full rounded-lg px-3 py-2 text-sm outline-none"
-                  style={{ background: C.cream, color: C.ink }}
-                />
-                {loginError && (
-                  <div className="text-[11px] font-semibold" style={{ color: C.coral }}>{loginError}</div>
+                {liffError && (
+                  <div className="text-[11px] font-semibold" style={{ color: C.coral }}>{liffError}</div>
                 )}
                 <button
-                  onClick={submitLoginChannel}
+                  onClick={submitLiffId}
                   className="w-full rounded-full py-2 text-xs font-bold"
                   style={{ background: C.teal, color: "#fff" }}
                 >
@@ -3332,19 +3322,13 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
               />
             </label>
 
-            {notifyDraft.line && storeSettings.lineLoginChannelId && (
+            {notifyDraft.line && storeSettings.lineLiffId && (
               lineUserId ? (
                 <div className="mt-1 text-[11px] font-semibold" style={{ color: C.teal }}>✓ LINEアカウントと連携済み</div>
               ) : (
                 <button
                   onClick={() => {
-                    const redirectUri = `${window.location.origin}/.netlify/functions/line-login-callback`;
-                    const url =
-                      `https://access.line.me/oauth2/v2.1/authorize?response_type=code` +
-                      `&client_id=${encodeURIComponent(storeSettings.lineLoginChannelId)}` +
-                      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-                      `&state=${encodeURIComponent(customerId)}` +
-                      `&scope=${encodeURIComponent("profile openid")}`;
+                    const url = `https://liff.line.me/${storeSettings.lineLiffId}?id=${encodeURIComponent(customerId)}&linkLine=1`;
                     window.location.href = url;
                   }}
                   className="mt-1 w-full rounded-full py-2 text-[12px] font-semibold"
