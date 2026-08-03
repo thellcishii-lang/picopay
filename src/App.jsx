@@ -1,49 +1,767 @@
-import React, { useEffect, useState } from 'react';
-import TopBar from './TopBar';
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import ModeTopBar from "./TopBar.jsx";
+import { C, StoreView, CustomerView } from "./components.jsx";
+import {
+  subscribeToAccount,
+  getAccountOnce,
+  getAccountVerificationInfo,
+  saveAccount,
+  createAccount,
+  listCustomers,
+  getStoreSettings,
+  saveStoreSettings,
+  getStoreSecrets,
+  saveStoreSecrets,
+  setCustomerStatus,
+  deleteCustomerPermanently,
+  reissueCustomerAccess,
+  requestPushToken,
+  sendPushNotification,
+  DEFAULT_ACCOUNT,
+  auth,
+  subscribeToAuth,
+  storeSignIn,
+  storeSignUp,
+  storeSignOut,
+  setupRecaptcha,
+  sendPhoneCode,
+} from "./firebase.js";
 
-function App() {
-  const [lineUserId, setLineUserId] = useState(null);
-  const [isLiffReady, setIsLiffReady] = useState(false);
+// Which role this page is depends on the URL, not a button:
+//   /store    → store admin screen (share this URL with staff devices)
+//   /customer → customer screen (share this URL, or the setup link, with customers)
+//   anything else defaults to /store, so the bare site URL still works.
+function modeFromPath() {
+  return window.location.pathname.startsWith("/customer") ? "customer" : "store";
+}
 
-  useEffect(() => {
-    // 取得したLIFF IDを設定
-    const liffId = "2010946742-QoyJY2TQ";
+// ---------------- STORE LOGIN ----------------
+function StoreLogin() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isSignup, setIsSignup] = useState(false);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
 
-    window.liff.init({ liffId: liffId })
-      .then(() => {
-        setIsLiffReady(true);
-        if (window.liff.isLoggedIn()) {
-          // ログイン済みならアクセストークンからユーザーID(sub)を取得
-          const profile = window.liff.getDecodedAccessToken();
-          const userId = profile.sub;
-          setLineUserId(userId);
-          
-          console.log("LINE User ID:", userId);
-          // TODO: ここで取得した userId を Firebase などのデータベースと紐付ける処理を記述します
-        } else {
-          // 未ログインの場合は自動でLINEログインへ誘導
-          window.liff.login();
-        }
-      })
-      .catch((err) => {
-        console.error("LIFF初期化エラー:", err);
-      });
-  }, []);
-
-  if (!isLiffReady) {
-    return <div className="p-4 text-center">Loading LINE...</div>;
-  }
+  const submit = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      if (isSignup) await storeSignUp(email, password);
+      else await storeSignIn(email, password);
+    } catch (e) {
+      setError(
+        isSignup
+          ? "登録できませんでした(既に使われているメールアドレスか、パスワードが短すぎる可能性があります)"
+          : "ログインできませんでした(メールアドレスかパスワードが違います)"
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <TopBar />
-      <main className="p-4">
-        <h1 className="text-xl font-bold mb-2">Picopay ポイントアプリ</h1>
-        <p className="text-sm text-gray-600">LINE User ID: {lineUserId || "取得中..."}</p>
-        {/* 既存のアプリ画面コンテンツ */}
-      </main>
+    <div className="max-w-md mx-auto px-4 pt-10">
+      <div className="rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+        <div className="text-sm font-bold" style={{ color: C.ink }}>
+          {isSignup ? "店舗アカウントを作成" : "店舗ログイン"}
+        </div>
+        <input
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="メールアドレス"
+          className="mt-3 w-full rounded-lg px-3 py-2 text-sm outline-none"
+          style={{ background: C.cream, color: C.ink }}
+        />
+        <input
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          type="password"
+          placeholder="パスワード(6文字以上)"
+          className="mt-2 w-full rounded-lg px-3 py-2 text-sm outline-none"
+          style={{ background: C.cream, color: C.ink }}
+        />
+        {error && (
+          <div className="mt-2 text-[11px] font-semibold" style={{ color: C.coral }}>
+            {error}
+          </div>
+        )}
+        <button
+          onClick={submit}
+          disabled={busy || !email || password.length < 6}
+          className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
+          style={{
+            background: email && password.length >= 6 ? C.teal : C.line,
+            color: email && password.length >= 6 ? "#fff" : C.mute,
+            opacity: busy ? 0.6 : 1,
+          }}
+        >
+          {busy ? "処理中…" : isSignup ? "登録する" : "ログイン"}
+        </button>
+        <button
+          onClick={() => { setIsSignup((v) => !v); setError(null); }}
+          className="mt-2 w-full text-[11px] font-semibold"
+          style={{ color: C.teal }}
+        >
+          {isSignup ? "すでにアカウントがある方はこちら" : "初めての方はこちら(アカウント作成)"}
+        </button>
+      </div>
     </div>
   );
 }
 
-export default App;
+// ---------------- CUSTOMER PHONE VERIFICATION ----------------
+function PhoneVerifyGate({ expectedPhone, onVerified }) {
+  const [code, setCode] = useState("");
+  const [confirmation, setConfirmation] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const recaptchaContainerId = "picopay-recaptcha";
+  const verifierRef = useRef(null);
+
+  const send = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      if (!verifierRef.current) verifierRef.current = setupRecaptcha(recaptchaContainerId);
+      const result = await sendPhoneCode(expectedPhone, verifierRef.current);
+      setConfirmation(result);
+    } catch (e) {
+      // A failed attempt often leaves the reCAPTCHA verifier in a bad
+      // state — drop it so the next click creates a fresh one.
+      if (verifierRef.current) {
+        try { verifierRef.current.clear(); } catch (_) {}
+        verifierRef.current = null;
+      }
+      setError(`SMSを送信できませんでした: ${e?.code || ""} ${e?.message || e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verify = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const result = await confirmation.confirm(code);
+      if (result.user.phoneNumber !== expectedPhone) {
+        setError("登録されている電話番号と一致しません");
+        return;
+      }
+      onVerified();
+    } catch (e) {
+      setError("コードが正しくありません");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="max-w-md mx-auto px-4 pt-8">
+      <div className="rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+        <div className="text-sm font-bold" style={{ color: C.ink }}>本人確認(SMS認証)</div>
+        <div className="text-[12px] mt-1" style={{ color: C.mute }}>
+          登録された電話番号({expectedPhone})宛にSMSで確認コードを送ります
+        </div>
+        {!confirmation ? (
+          <button
+            onClick={send}
+            disabled={busy}
+            className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
+            style={{ background: C.teal, color: "#fff", opacity: busy ? 0.6 : 1 }}
+          >
+            {busy ? "送信中…" : "SMSを送信する"}
+          </button>
+        ) : (
+          <>
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="SMSで届いたコード"
+              className="mt-3 w-full rounded-lg px-3 py-2 text-sm outline-none"
+              style={{ background: C.cream, color: C.ink }}
+            />
+            <button
+              onClick={verify}
+              disabled={busy || !code}
+              className="mt-2 w-full rounded-full py-2.5 text-sm font-bold"
+              style={{ background: code ? C.teal : C.line, color: code ? "#fff" : C.mute, opacity: busy ? 0.6 : 1 }}
+            >
+              {busy ? "確認中…" : "確認する"}
+            </button>
+          </>
+        )}
+        {error && (
+          <div className="mt-2 text-[11px] font-semibold" style={{ color: C.coral }}>
+            {error}
+          </div>
+        )}
+      </div>
+      <div id={recaptchaContainerId} />
+    </div>
+  );
+}
+
+// Turns a horizontal logo image into a square icon (for the home-screen
+// icon), by centering it on a padded square canvas. Returns a Promise of a
+// data URL.
+function padLogoToSquareIcon(logoDataUrl, size = 512, background = "#FBF7F0") {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = background;
+      ctx.fillRect(0, 0, size, size);
+      const pad = size * 0.15;
+      const maxW = size - pad * 2;
+      const maxH = size - pad * 2;
+      const scale = Math.min(maxW / img.width, maxH / img.height, 1);
+      const w = img.width * scale;
+      const h = img.height * scale;
+      ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+      resolve(canvas.toDataURL("image/png"));
+    };
+    img.src = logoDataUrl;
+  });
+}
+
+export default function App() {
+  const [mode] = useState(modeFromPath);
+
+  // ---- Auth state (shared: applies to whichever mode this page is) ----
+  const [authUser, setAuthUser] = useState(undefined); // undefined = not checked yet, null = signed out
+  useEffect(() => {
+    const unsubscribe = subscribeToAuth(setAuthUser);
+    return () => unsubscribe();
+  }, []);
+
+  // Shared branding/settings the store configures once — LINE URL, logo/icon,
+  // store name, and the customer-side hero image. Fetched on both sides
+  // (store needs it to edit, customer needs it to render their own header).
+  const [storeSettings, setStoreSettingsState] = useState({});
+  useEffect(() => {
+    getStoreSettings().then(setStoreSettingsState);
+  }, [mode]);
+
+  // Sensitive credentials (LINE API keys etc.) — only fetched once the
+  // store staff is actually signed in, since the security rules restrict
+  // this node to email-authenticated users.
+  const [storeSecrets, setStoreSecretsState] = useState({});
+  useEffect(() => {
+    if (mode === "store" && authUser) {
+      getStoreSecrets().then(setStoreSecretsState);
+    }
+  }, [mode, authUser]);
+
+  // rankingEnabled/weatherEnabled used to be local, per-device state, which
+  // meant toggling them in store settings never actually reached the
+  // customer's screen (each device had its own default). They now live in
+  // the shared storeSettings, same as everything else configurable.
+  const rankingEnabled = storeSettings.rankingEnabled ?? true;
+  const weatherEnabled = storeSettings.weatherEnabled ?? true;
+
+  // Whenever branding changes, update the home-screen ("Add to Home
+  // Screen") icon: the square icon if the store uploaded one, or the
+  // horizontal logo padded into a square, or fall back to PicoPay's own
+  // icon if nothing is configured.
+  useEffect(() => {
+    let cancelled = false;
+    const apply = async () => {
+      let iconUrl = null;
+      if (storeSettings.brandMode === "iconName" && storeSettings.iconImage) {
+        iconUrl = storeSettings.iconImage;
+      } else if (storeSettings.brandMode === "logo" && storeSettings.logoImage) {
+        iconUrl = await padLogoToSquareIcon(storeSettings.logoImage);
+      }
+      if (cancelled) return;
+      const favicon = iconUrl || "/favicon.svg";
+      document.getElementById("app-favicon")?.setAttribute("href", favicon);
+      document.getElementById("app-touch-icon")?.setAttribute("href", favicon);
+
+      const manifest = {
+        name: storeSettings.storeName || "PicoPay",
+        short_name: storeSettings.storeName || "PicoPay",
+        start_url: "/store",
+        display: "standalone",
+        background_color: "#FBF7F0",
+        theme_color: "#0E6E5C",
+        icons: [{ src: favicon, sizes: "any", type: iconUrl ? "image/png" : "image/svg+xml" }],
+      };
+      const blob = new Blob([JSON.stringify(manifest)], { type: "application/json" });
+      document.getElementById("app-manifest")?.setAttribute("href", URL.createObjectURL(blob));
+    };
+    apply();
+    return () => {
+      cancelled = true;
+    };
+  }, [storeSettings.brandMode, storeSettings.iconImage, storeSettings.logoImage, storeSettings.storeName]);
+
+  // ---- Store-side: the full customer list ----
+  const [customers, setCustomers] = useState([]);
+  const refreshCustomers = useCallback(async () => {
+    const list = await listCustomers();
+    setCustomers(list);
+  }, []);
+  useEffect(() => {
+    if (mode === "store" && authUser) refreshCustomers();
+  }, [mode, authUser, refreshCustomers]);
+
+  const handleSaveStoreSettings = async (updates) => {
+    await saveStoreSettings(updates);
+    setStoreSettingsState((prev) => ({ ...prev, ...updates }));
+  };
+
+  const handleSaveStoreSecrets = async (updates) => {
+    await saveStoreSecrets(updates);
+    setStoreSecretsState((prev) => ({ ...prev, ...updates }));
+  };
+
+  const handleSetRankingEnabled = (value) => handleSaveStoreSettings({ rankingEnabled: value });
+  const handleSetWeatherEnabled = (value) => handleSaveStoreSettings({ weatherEnabled: value });
+
+  const handleRegisterCustomer = async ({ name, phone, email, requireVerification, referredBy }) => {
+    const customerId = await createAccount({ name, phone, email, requireVerification, referredBy });
+    await refreshCustomers();
+    return customerId;
+  };
+
+  const handleSetCustomerStatus = async (customerId, status) => {
+    await setCustomerStatus(customerId, status);
+    await refreshCustomers();
+  };
+
+  const handleDeleteCustomer = async (customerId) => {
+    await deleteCustomerPermanently(customerId);
+    await refreshCustomers();
+  };
+
+  const handleReissueCustomer = async ({ customerId, newPhone, idPhotoDataUrl }) => {
+    await reissueCustomerAccess({ customerId, newPhone, idPhotoDataUrl });
+    await refreshCustomers();
+  };
+
+  // A store device charges/deducts whichever customer it just scanned — it
+  // doesn't hold a live subscription to any one account, just does a
+  // one-off read-modify-write each time.
+  const applyToAccount = async (customerId, updater) => {
+    const current = await getAccountOnce(customerId);
+    if (current.status && current.status !== "active") {
+      throw new Error(
+        current.status === "blacklisted"
+          ? "このお客様はブラックリスト登録されているため、決済できません"
+          : "このお客様は現在一時停止中のため、決済できません"
+      );
+    }
+    const next = updater(current);
+    await saveAccount(customerId, next);
+    refreshCustomers();
+    return next;
+  };
+
+  // For the customer updating their own profile (e.g. notification
+  // preferences) — no store-side customer-list refresh needed here, and a
+  // suspended/blacklisted customer should still be able to change this.
+  const applyToOwnAccount = async (customerId, updater) => {
+    const current = await getAccountOnce(customerId);
+    const next = updater(current);
+    await saveAccount(customerId, next);
+    return next;
+  };
+
+  const handleUpdateNotifyPrefs = async (customerId, prefs) => {
+    let pushToken = null;
+    if (prefs.push) {
+      pushToken = await requestPushToken();
+      if (!pushToken) {
+        // Permission denied, or the browser doesn't support push — keep the
+        // checkbox state the customer chose, but there's no token to save,
+        // so nothing will actually be deliverable until they allow it.
+      }
+    }
+    await applyToOwnAccount(customerId, (prev) => {
+      const existingTokens = prev.pushTokens || [];
+      const nextTokens =
+        prefs.push && pushToken && !existingTokens.includes(pushToken)
+          ? [...existingTokens, pushToken]
+          : existingTokens;
+      return { ...prev, notifyOptIn: prefs, pushTokens: nextTokens };
+    });
+  };
+
+  const handleSendPush = async (tokens, body) => {
+    if (!tokens || tokens.length === 0) return;
+    const title = storeSettings.storeName || "PicoPay";
+    await sendPushNotification({ tokens, title, body });
+  };
+
+  const computeDepositBonus = (amount) => {
+    if (!storeSettings.depositBonusEnabled) return 0;
+    if (storeSettings.depositBonusFlatMode) {
+      return Math.round(amount * ((storeSettings.depositBonusFlatRate || 0) / 100));
+    }
+    const tiers = storeSettings.depositBonusTiers || [];
+    const tier = tiers.find((t) => t.upTo === null || amount <= t.upTo) || tiers[tiers.length - 1];
+    return tier ? Math.round(amount * ((tier.rate || 0) / 100)) : 0;
+  };
+
+  const handleCharge = async (amount, customerId) => {
+    if (!customerId) return;
+    const result = await applyToAccount(customerId, (prev) => {
+      // If this customer was referred and hasn't received their referral
+      // bonus yet, this first charge is what triggers both bonuses.
+      const giveReferralBonus =
+        storeSettings.referralEnabled && prev.referredBy && !prev.referralBonusGiven;
+      const refereeBonus = giveReferralBonus
+        ? Math.round(amount * ((storeSettings.referralRefereeRate || 0) / 100))
+        : 0;
+      const depositBonus = computeDepositBonus(amount);
+      const history = [
+        {
+          date: "今日",
+          summary: `チャージ ¥${amount.toLocaleString()}`,
+          total: amount,
+          items: [{ label: "チャージ", amount }],
+        },
+        ...(prev.history || []),
+      ];
+      if (depositBonus > 0) {
+        history.unshift({
+          date: "今日",
+          summary: "入金ボーナス",
+          total: depositBonus,
+          items: [{ label: "入金ボーナス", amount: depositBonus }],
+        });
+      }
+      if (refereeBonus > 0) {
+        history.unshift({
+          date: "今日",
+          summary: `お友達紹介ボーナス+${storeSettings.referralRefereeRate}%`,
+          total: refereeBonus,
+          items: [{ label: "お友達紹介ボーナス(紹介された方)", amount: refereeBonus }],
+        });
+      }
+      return {
+        ...prev,
+        depositBalance: (prev.depositBalance || 0) + amount,
+        pointBalance: (prev.pointBalance || 0) + refereeBonus + depositBonus,
+        bonusEligible: storeSettings.gachaEnabled !== false && amount >= 10000 ? true : prev.bonusEligible,
+        referralBonusGiven: giveReferralBonus ? true : prev.referralBonusGiven,
+        history,
+      };
+    });
+
+    // If a referral bonus was just triggered, also credit the referrer —
+    // this is a separate account, so it's a second, independent update.
+    if (storeSettings.referralEnabled && result.referredBy && result.referralBonusGiven) {
+      const referrerBonus = Math.round(amount * ((storeSettings.referralReferrerRate || 0) / 100));
+      if (referrerBonus > 0) {
+        try {
+          await applyToAccount(result.referredBy, (prev) => ({
+            ...prev,
+            pointBalance: (prev.pointBalance || 0) + referrerBonus,
+            history: [
+              {
+                date: "今日",
+                summary: `お友達紹介ボーナス+${storeSettings.referralReferrerRate}%`,
+                total: referrerBonus,
+                items: [{ label: "お友達紹介ボーナス(紹介した方)", amount: referrerBonus }],
+              },
+              ...(prev.history || []),
+            ],
+          }));
+        } catch (e) {
+          // If the referrer's account is blacklisted/suspended/deleted, just
+          // skip their bonus rather than failing the referee's charge.
+        }
+      }
+    }
+  };
+
+  const computePurchasePoints = (amount) => {
+    if (!storeSettings.purchasePointEnabled) return 0;
+    if (storeSettings.purchasePointFlatMode) {
+      return Math.round(amount * ((storeSettings.purchasePointFlatRate || 0) / 100));
+    }
+    const tiers = storeSettings.purchasePointTiers || [];
+    const tier = tiers.find((t) => t.upTo === null || amount <= t.upTo) || tiers[tiers.length - 1];
+    return tier ? Math.round(amount * ((tier.rate || 0) / 100)) : 0;
+  };
+
+  const handleDeduct = (amount, customerId) => {
+    if (!customerId) return Promise.resolve();
+    return applyToAccount(customerId, (prev) => {
+      let remaining = amount;
+      const usedPoints = Math.min(prev.pointBalance || 0, remaining);
+      remaining -= usedPoints;
+      const usedDeposit = Math.min(prev.depositBalance || 0, remaining);
+      const newDeposit = Math.max(0, (prev.depositBalance || 0) - remaining);
+      const earnedPoints = computePurchasePoints(amount);
+      const items = [];
+      if (usedPoints > 0) items.push({ label: "お会計(ポイント消費分)", amount: -usedPoints });
+      if (usedDeposit > 0) items.push({ label: "お会計(預かり金消費分)", amount: -usedDeposit });
+      const history = [
+        {
+          date: "今日",
+          summary: `お会計 -¥${amount.toLocaleString()}`,
+          total: -amount,
+          items,
+        },
+        ...(prev.history || []),
+      ];
+      if (earnedPoints > 0) {
+        history.unshift({
+          date: "今日",
+          summary: "購入ポイント付与",
+          total: earnedPoints,
+          items: [{ label: "購入ポイント", amount: earnedPoints }],
+        });
+      }
+      return {
+        ...prev,
+        pointBalance: (prev.pointBalance || 0) - usedPoints + earnedPoints,
+        depositBalance: newDeposit,
+        history,
+      };
+    });
+  };
+
+  const totalBalance = customers.reduce((s, c) => s + c.balance, 0);
+
+  // ---- Customer-side: this device's own account ----
+  const [myCustomerId, setMyCustomerId] = useState(() => {
+    if (typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    const fromLink = params.get("id");
+    if (fromLink) {
+      localStorage.setItem("picopay-customer-id", fromLink);
+      return fromLink;
+    }
+    return localStorage.getItem("picopay-customer-id");
+  });
+  const [setupInput, setSetupInput] = useState("");
+  const [account, setAccount] = useState(DEFAULT_ACCOUNT);
+  const [accountLoaded, setAccountLoaded] = useState(false);
+  // The phone number on file for this account, and whether verification is
+  // required at all — fetched via a public, read-only lookup so we can
+  // decide whether the gate is needed *before* the customer is
+  // authenticated (see getAccountVerificationInfo in firebase.js).
+  const [myPhone, setMyPhone] = useState(undefined); // undefined = not checked yet, null = no phone on file
+  const [requireVerification, setRequireVerification] = useState(true);
+  // Has this device's phone been verified against this account's phone yet?
+  const [phoneVerified, setPhoneVerified] = useState(false);
+
+  useEffect(() => {
+    if (mode !== "customer" || !myCustomerId) return;
+    let cancelled = false;
+    getAccountVerificationInfo(myCustomerId).then(({ phone, requireVerification }) => {
+      if (!cancelled) {
+        setMyPhone(phone);
+        setRequireVerification(requireVerification);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, myCustomerId]);
+
+  // If this browser session's Firebase Auth phone number already matches the
+  // account's registered phone, or verification isn't required at all, skip
+  // the verification screen and load the real account data.
+  useEffect(() => {
+    if (myPhone === undefined) return; // still checking
+    if (!myPhone || !requireVerification || authUser?.phoneNumber === myPhone) {
+      setPhoneVerified(true);
+    }
+  }, [myPhone, requireVerification, authUser]);
+
+  useEffect(() => {
+    if (mode !== "customer" || !myCustomerId || !phoneVerified) return;
+    setAccountLoaded(false);
+    const unsubscribe = subscribeToAccount(myCustomerId, (data) => {
+      setAccount(data);
+      setAccountLoaded(true);
+    });
+    return () => unsubscribe();
+  }, [mode, myCustomerId, phoneVerified]);
+
+  // If this page was opened via the LIFF link (customer tapped "LINEアカウ
+  // ントと連携する"), it's running inside LINE's in-app browser — grab the
+  // LINE profile and save the userId against this customer's account.
+  useEffect(() => {
+    if (mode !== "customer" || !myCustomerId || !phoneVerified) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("linkLine") !== "1") return;
+    if (!storeSettings.lineLiffId) return;
+
+    let cancelled = false;
+    const link = async () => {
+      try {
+        if (!window.liff) return;
+        await window.liff.init({ liffId: storeSettings.lineLiffId });
+        if (!window.liff.isLoggedIn()) {
+          window.liff.login();
+          return;
+        }
+        const profile = await window.liff.getProfile();
+        if (cancelled) return;
+        await applyToOwnAccount(myCustomerId, (prev) => ({ ...prev, lineUserId: profile.userId }));
+        const url = new URL(window.location.href);
+        url.searchParams.delete("linkLine");
+        window.history.replaceState({}, "", url.toString());
+      } catch (e) {
+        // Customer can just try the "連携する" button again.
+      }
+    };
+    link();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, myCustomerId, phoneVerified, storeSettings.lineLiffId]);
+
+  const handleUseBonusSpin = (rate) => {
+    if (!myCustomerId) return;
+    applyToAccount(myCustomerId, (prev) => {
+      const bonus = Math.round((prev.depositBalance || 0) * (rate / 100));
+      return {
+        ...prev,
+        pointBalance: (prev.pointBalance || 0) + bonus,
+        bonusEligible: false,
+        history: [
+          {
+            date: "今日",
+            summary: `ガチャボーナス+${rate}%`,
+            total: bonus,
+            items: [{ label: `ガチャボーナス(${rate}%)`, amount: bonus }],
+          },
+          ...(prev.history || []),
+        ],
+      };
+    });
+  };
+
+  const confirmSetup = () => {
+    // Accept a plain ID, a scanned "PICOPAY-SETUP:<id>" value, or a full setup URL.
+    const raw = setupInput.trim();
+    let id = raw;
+    if (raw.startsWith("PICOPAY-SETUP:")) id = raw.split(":")[1];
+    else if (raw.includes("?id=")) id = raw.split("?id=")[1];
+    if (!id) return;
+    localStorage.setItem("picopay-customer-id", id);
+    setMyCustomerId(id);
+  };
+
+  const needsPhoneGate = mode === "customer" && myPhone !== undefined && myPhone && !phoneVerified;
+
+  return (
+    <div className="min-h-screen" style={{ background: C.cream, fontFamily: "'Hiragino Sans', system-ui, sans-serif" }}>
+      <ModeTopBar mode={mode} storeSettings={storeSettings} />
+      {mode === "store" ? (
+        authUser === undefined ? (
+          <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
+            <div className="text-sm" style={{ color: C.mute }}>読み込み中…</div>
+          </div>
+        ) : !authUser ? (
+          <StoreLogin />
+        ) : (
+          <>
+            <StoreView
+              totalBalance={totalBalance}
+              onCharge={handleCharge}
+              onDeduct={handleDeduct}
+              rankingEnabled={rankingEnabled}
+              setRankingEnabled={handleSetRankingEnabled}
+              weatherEnabled={weatherEnabled}
+              setWeatherEnabled={handleSetWeatherEnabled}
+              customers={customers}
+              onRegisterCustomer={handleRegisterCustomer}
+              onFetchCustomerDetail={getAccountOnce}
+              onSetCustomerStatus={handleSetCustomerStatus}
+              onDeleteCustomer={handleDeleteCustomer}
+              onReissueCustomer={handleReissueCustomer}
+              lineUrl={storeSettings.lineUrl || ""}
+              storeSettings={storeSettings}
+              onSaveStoreSettings={handleSaveStoreSettings}
+              onSendPush={handleSendPush}
+              storeSecrets={storeSecrets}
+              onSaveStoreSecrets={handleSaveStoreSecrets}
+            />
+            <div className="max-w-md mx-auto px-4 pb-6">
+              <button
+                onClick={storeSignOut}
+                className="text-[11px] font-semibold"
+                style={{ color: C.mute }}
+              >
+                ログアウト({authUser.email})
+              </button>
+            </div>
+          </>
+        )
+      ) : !myCustomerId ? (
+        <div className="max-w-md mx-auto px-4 pt-8">
+          <div className="rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+            <div className="text-sm font-bold" style={{ color: C.ink }}>PicoPayへようこそ</div>
+            <div className="text-[12px] mt-1" style={{ color: C.mute }}>
+              お店で発行されたお客様IDを入力してください(最初の1回だけです)
+            </div>
+            <input
+              value={setupInput}
+              onChange={(e) => setSetupInput(e.target.value)}
+              placeholder="例: cust-xxxxxxxx"
+              className="mt-3 w-full rounded-lg px-3 py-2 text-sm outline-none"
+              style={{ background: C.cream, color: C.ink }}
+            />
+            <button
+              onClick={confirmSetup}
+              disabled={!setupInput.trim()}
+              className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
+              style={{ background: setupInput.trim() ? C.teal : C.line, color: setupInput.trim() ? "#fff" : C.mute }}
+            >
+              設定する
+            </button>
+          </div>
+        </div>
+      ) : myPhone === undefined ? (
+        <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
+          <div className="text-sm" style={{ color: C.mute }}>読み込み中…</div>
+        </div>
+      ) : needsPhoneGate ? (
+        <PhoneVerifyGate
+          expectedPhone={myPhone}
+          onVerified={() => setPhoneVerified(true)}
+        />
+      ) : !accountLoaded ? (
+        <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
+          <div className="text-sm" style={{ color: C.mute }}>読み込み中…</div>
+        </div>
+      ) : account.status && account.status !== "active" ? (
+        <div className="max-w-md mx-auto px-4 pt-8">
+          <div className="rounded-2xl p-4 text-center" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+            <div className="text-sm font-bold" style={{ color: C.ink }}>
+              現在このアカウントはご利用いただけません
+            </div>
+            <div className="text-[12px] mt-2" style={{ color: C.mute }}>
+              詳しくは導入店舗までお問い合わせください
+            </div>
+          </div>
+        </div>
+      ) : (
+        <CustomerView
+          pointBalance={account.pointBalance || 0}
+          depositBalance={account.depositBalance || 0}
+          bonusEligible={account.bonusEligible || false}
+          onUseBonusSpin={handleUseBonusSpin}
+          history={account.history || []}
+          rankingEnabled={rankingEnabled}
+          customerId={myCustomerId}
+          storeSettings={storeSettings}
+          notifyOptIn={account.notifyOptIn || null}
+          onUpdateNotifyPrefs={(prefs) => handleUpdateNotifyPrefs(myCustomerId, prefs)}
+          lineUserId={account.lineUserId || null}
+        />
+      )}
+    </div>
+  );
+}
