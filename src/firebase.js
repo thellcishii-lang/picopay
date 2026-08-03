@@ -2,6 +2,7 @@
 // This connects to the "PicoPay" Firebase project's Realtime Database and Authentication.
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, onValue, set, get, update, remove } from "firebase/database";
+import { getMessaging, getToken, isSupported as isMessagingSupported } from "firebase/messaging";
 import {
   getAuth,
   onAuthStateChanged,
@@ -25,6 +26,33 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const db = getDatabase(app);
 export const auth = getAuth(app);
+
+// ---- Push notifications (Web Push via Firebase Cloud Messaging) ----
+// Generated in Firebase console → Project settings → Cloud Messaging →
+// Web configuration → "Web Push certificates". This is safe to keep in
+// client code — it identifies the project, not a secret credential.
+const VAPID_KEY = "BKdzxi1YhwTVGdrLzaWou8govXVJu45ftEyWjG1huuOjs1ZfQ92v_2QSOS2AUa1eX7FhSI1sc5gaL14dxmdnoWA";
+
+// Asks the browser for notification permission and, if granted, returns
+// this device's FCM token (used to target push notifications at it).
+// Returns null if unsupported (e.g. desktop-only Safari) or not granted.
+export async function requestPushToken() {
+  const supported = await isMessagingSupported().catch(() => false);
+  if (!supported) return null;
+  if (!("serviceWorker" in navigator)) return null;
+
+  const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") return null;
+
+  const messaging = getMessaging(app);
+  try {
+    const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
+    return token || null;
+  } catch (e) {
+    return null;
+  }
+}
 
 // ---- Auth: store side (email/password) ----
 export function subscribeToAuth(callback) {
