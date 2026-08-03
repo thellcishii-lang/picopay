@@ -196,3 +196,16 @@ export async function listCustomers() {
 }
 
 export { DEFAULT_ACCOUNT };
+
+// ---- Store-level settings (shared across all store devices) ----
+// Currently just the LINE official account URL, used to generate a real
+// QR code for customers to add as a friend. Structured as a general object
+// so future store-branding fields (icon, name, etc.) can live here too.
+export async function getStoreSettings() {
+  const snapshot = await get(ref(db, "storeSettings"));
+  return snapshot.val() || {};
+}
+
+export async function saveStoreSettings(settings) {
+  await update(ref(db, "storeSettings"), settings);
+}
