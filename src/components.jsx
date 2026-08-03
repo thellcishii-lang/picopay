@@ -2090,12 +2090,18 @@ function ChannelBroadcastSection({ channelKey, channelLabel, customers, storeSet
   );
 }
 
-function BroadcastPanel({ customers, storeSettings, onSave, onSendPush }) {
+function BroadcastPanel({ customers, storeSettings, onSave, onSendPush, storeSecrets = {}, onSaveSecrets }) {
   const [showLineSetup, setShowLineSetup] = useState(false);
   const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [keyError, setKeyError] = useState(null);
 
-  const lineApiKey = storeSettings.lineApiKey || "";
+  const [showLoginSetup, setShowLoginSetup] = useState(false);
+  const [loginChannelIdDraft, setLoginChannelIdDraft] = useState("");
+  const [loginChannelSecretDraft, setLoginChannelSecretDraft] = useState("");
+  const [loginError, setLoginError] = useState(null);
+
+  const lineApiKey = storeSecrets.lineApiKey || "";
+  const lineLoginChannelId = storeSettings.lineLoginChannelId || "";
 
   const submitApiKey = async () => {
     setKeyError(null);
@@ -2105,9 +2111,22 @@ function BroadcastPanel({ customers, storeSettings, onSave, onSendPush }) {
       setKeyError("APIキーの形式が正しくないようです。LINE Developersからコピーした値を確認してください");
       return;
     }
-    await onSave({ lineApiKey: apiKeyDraft.trim() });
+    await onSaveSecrets({ lineApiKey: apiKeyDraft.trim() });
     setApiKeyDraft("");
     setShowLineSetup(false);
+  };
+
+  const submitLoginChannel = async () => {
+    setLoginError(null);
+    if (!loginChannelIdDraft.trim() || loginChannelSecretDraft.trim().length < 10) {
+      setLoginError("Channel IDとChannel Secretの両方を、LINE Developersの画面からコピーして入力してください");
+      return;
+    }
+    await onSave({ lineLoginChannelId: loginChannelIdDraft.trim() });
+    await onSaveSecrets({ lineLoginChannelSecret: loginChannelSecretDraft.trim() });
+    setLoginChannelIdDraft("");
+    setLoginChannelSecretDraft("");
+    setShowLoginSetup(false);
   };
 
   return (
@@ -2157,6 +2176,55 @@ function BroadcastPanel({ customers, storeSettings, onSave, onSendPush }) {
             >
               送信
             </button>
+          </div>
+        )}
+
+        {lineApiKey && (
+          <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
+            <div className="text-[11px] font-semibold" style={{ color: C.ink }}>
+              お客様とLINEアカウントの紐付け(LINEログイン連携)
+            </div>
+            <div className="text-[10px] mt-1" style={{ color: C.mute }}>
+              「どのお客様が友だち追加したか」を特定するために、LINEログイン用のチャネルを別途1つ登録する必要があります(Messaging APIのチャネルとは別物です)。LINE Developersで「LINEログイン」チャネルを作成し、Channel IDとChannel Secretを入力してください。
+            </div>
+            {lineLoginChannelId ? (
+              <div className="mt-2 text-[11px] font-semibold" style={{ color: C.teal }}>✓ 連携設定済み</div>
+            ) : !showLoginSetup ? (
+              <button
+                onClick={() => setShowLoginSetup(true)}
+                className="mt-2 w-full rounded-full py-2 text-xs font-semibold"
+                style={{ background: C.cream, color: C.ink }}
+              >
+                LINEログイン連携を設定する
+              </button>
+            ) : (
+              <div className="mt-2 space-y-2">
+                <input
+                  value={loginChannelIdDraft}
+                  onChange={(e) => setLoginChannelIdDraft(e.target.value)}
+                  placeholder="Channel ID"
+                  className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+                  style={{ background: C.cream, color: C.ink }}
+                />
+                <input
+                  value={loginChannelSecretDraft}
+                  onChange={(e) => setLoginChannelSecretDraft(e.target.value)}
+                  placeholder="Channel Secret"
+                  className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+                  style={{ background: C.cream, color: C.ink }}
+                />
+                {loginError && (
+                  <div className="text-[11px] font-semibold" style={{ color: C.coral }}>{loginError}</div>
+                )}
+                <button
+                  onClick={submitLoginChannel}
+                  className="w-full rounded-full py-2 text-xs font-bold"
+                  style={{ background: C.teal, color: "#fff" }}
+                >
+                  保存
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -2604,7 +2672,7 @@ function StoreBrandingSettings({ storeSettings, onSave }) {
   );
 }
 
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, lineUrl, storeSettings = {}, onSaveStoreSettings, onSendPush }) {
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, lineUrl, storeSettings = {}, onSaveStoreSettings, onSendPush, storeSecrets = {}, onSaveStoreSecrets }) {
   const [tab, setTab] = useState("dashboard");
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
@@ -2914,6 +2982,8 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
           storeSettings={storeSettings}
           onSave={onSaveStoreSettings}
           onSendPush={onSendPush}
+          storeSecrets={storeSecrets}
+          onSaveSecrets={onSaveStoreSecrets}
         />
       )}
 
@@ -2941,7 +3011,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
 }
 
 // ---------------- CUSTOMER VIEW ----------------
-function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusSpin, history, rankingEnabled, customerId, storeSettings = {}, notifyOptIn, onUpdateNotifyPrefs }) {
+function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusSpin, history, rankingEnabled, customerId, storeSettings = {}, notifyOptIn, onUpdateNotifyPrefs, lineUserId }) {
   const [showNotifySettings, setShowNotifySettings] = useState(false);
   const [notifyDraft, setNotifyDraft] = useState({
     push: notifyOptIn?.push || false,
@@ -3263,6 +3333,29 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
                 onChange={(e) => setNotifyDraft((d) => ({ ...d, line: e.target.checked }))}
               />
             </label>
+
+            {notifyDraft.line && storeSettings.lineLoginChannelId && (
+              lineUserId ? (
+                <div className="mt-1 text-[11px] font-semibold" style={{ color: C.teal }}>✓ LINEアカウントと連携済み</div>
+              ) : (
+                <button
+                  onClick={() => {
+                    const redirectUri = `${window.location.origin}/.netlify/functions/line-login-callback`;
+                    const url =
+                      `https://access.line.me/oauth2/v2.1/authorize?response_type=code` +
+                      `&client_id=${encodeURIComponent(storeSettings.lineLoginChannelId)}` +
+                      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+                      `&state=${encodeURIComponent(customerId)}` +
+                      `&scope=${encodeURIComponent("profile openid")}`;
+                    window.location.href = url;
+                  }}
+                  className="mt-1 w-full rounded-full py-2 text-[12px] font-semibold"
+                  style={{ background: "#06C755", color: "#fff" }}
+                >
+                  LINEアカウントと連携する
+                </button>
+              )
+            )}
 
             <button
               onClick={saveNotifyPrefs}
