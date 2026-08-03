@@ -296,8 +296,8 @@ export default function App() {
     setStoreSettingsState((prev) => ({ ...prev, ...updates }));
   };
 
-  const handleRegisterCustomer = async ({ name, phone, email, requireVerification }) => {
-    const customerId = await createAccount({ name, phone, email, requireVerification });
+  const handleRegisterCustomer = async ({ name, phone, email, requireVerification, referredBy }) => {
+    const customerId = await createAccount({ name, phone, email, requireVerification, referredBy });
     await refreshCustomers();
     return customerId;
   };
@@ -332,15 +332,20 @@ export default function App() {
     const next = updater(current);
     await saveAccount(customerId, next);
     refreshCustomers();
+    return next;
   };
 
-  const handleCharge = (amount, customerId) => {
-    if (!customerId) return Promise.resolve();
-    return applyToAccount(customerId, (prev) => ({
-      ...prev,
-      depositBalance: (prev.depositBalance || 0) + amount,
-      bonusEligible: amount >= 10000 ? true : prev.bonusEligible,
-      history: [
+  const handleCharge = async (amount, customerId) => {
+    if (!customerId) return;
+    const result = await applyToAccount(customerId, (prev) => {
+      // If this customer was referred and hasn't received their referral
+      // bonus yet, this first charge is what triggers both bonuses.
+      const giveReferralBonus =
+        storeSettings.referralEnabled && prev.referredBy && !prev.referralBonusGiven;
+      const refereeBonus = giveReferralBonus
+        ? Math.round(amount * ((storeSettings.referralRefereeRate || 0) / 100))
+        : 0;
+      const history = [
         {
           date: "今日",
           summary: `チャージ ¥${amount.toLocaleString()}`,
@@ -348,8 +353,50 @@ export default function App() {
           items: [{ label: "チャージ", amount }],
         },
         ...(prev.history || []),
-      ],
-    }));
+      ];
+      if (refereeBonus > 0) {
+        history.unshift({
+          date: "今日",
+          summary: `お友達紹介ボーナス+${storeSettings.referralRefereeRate}%`,
+          total: refereeBonus,
+          items: [{ label: "お友達紹介ボーナス(紹介された方)", amount: refereeBonus }],
+        });
+      }
+      return {
+        ...prev,
+        depositBalance: (prev.depositBalance || 0) + amount,
+        pointBalance: (prev.pointBalance || 0) + refereeBonus,
+        bonusEligible: amount >= 10000 ? true : prev.bonusEligible,
+        referralBonusGiven: giveReferralBonus ? true : prev.referralBonusGiven,
+        history,
+      };
+    });
+
+    // If a referral bonus was just triggered, also credit the referrer —
+    // this is a separate account, so it's a second, independent update.
+    if (storeSettings.referralEnabled && result.referredBy && result.referralBonusGiven) {
+      const referrerBonus = Math.round(amount * ((storeSettings.referralReferrerRate || 0) / 100));
+      if (referrerBonus > 0) {
+        try {
+          await applyToAccount(result.referredBy, (prev) => ({
+            ...prev,
+            pointBalance: (prev.pointBalance || 0) + referrerBonus,
+            history: [
+              {
+                date: "今日",
+                summary: `お友達紹介ボーナス+${storeSettings.referralReferrerRate}%`,
+                total: referrerBonus,
+                items: [{ label: "お友達紹介ボーナス(紹介した方)", amount: referrerBonus }],
+              },
+              ...(prev.history || []),
+            ],
+          }));
+        } catch (e) {
+          // If the referrer's account is blacklisted/suspended/deleted, just
+          // skip their bonus rather than failing the referee's charge.
+        }
+      }
+    }
   };
 
   const handleDeduct = (amount, customerId) => {
