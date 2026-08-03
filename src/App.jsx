@@ -8,6 +8,8 @@ import {
   saveAccount,
   createAccount,
   listCustomers,
+  setCustomerStatus,
+  deleteCustomerPermanently,
   DEFAULT_ACCOUNT,
   auth,
   subscribeToAuth,
@@ -217,10 +219,20 @@ export default function App() {
     if (mode === "store" && authUser) refreshCustomers();
   }, [mode, authUser, refreshCustomers]);
 
-  const handleRegisterCustomer = async ({ name, phone, email }) => {
-    const customerId = await createAccount({ name, phone, email });
+  const handleRegisterCustomer = async ({ name, phone, email, requireVerification }) => {
+    const customerId = await createAccount({ name, phone, email, requireVerification });
     await refreshCustomers();
     return customerId;
+  };
+
+  const handleSetCustomerStatus = async (customerId, status) => {
+    await setCustomerStatus(customerId, status);
+    await refreshCustomers();
+  };
+
+  const handleDeleteCustomer = async (customerId) => {
+    await deleteCustomerPermanently(customerId);
+    await refreshCustomers();
   };
 
   // A store device charges/deducts whichever customer it just scanned — it
@@ -228,14 +240,21 @@ export default function App() {
   // one-off read-modify-write each time.
   const applyToAccount = async (customerId, updater) => {
     const current = await getAccountOnce(customerId);
+    if (current.status && current.status !== "active") {
+      throw new Error(
+        current.status === "blacklisted"
+          ? "このお客様はブラックリスト登録されているため、決済できません"
+          : "このお客様は現在一時停止中のため、決済できません"
+      );
+    }
     const next = updater(current);
     await saveAccount(customerId, next);
     refreshCustomers();
   };
 
   const handleCharge = (amount, customerId) => {
-    if (!customerId) return;
-    applyToAccount(customerId, (prev) => ({
+    if (!customerId) return Promise.resolve();
+    return applyToAccount(customerId, (prev) => ({
       ...prev,
       depositBalance: (prev.depositBalance || 0) + amount,
       bonusEligible: amount >= 10000 ? true : prev.bonusEligible,
@@ -252,8 +271,8 @@ export default function App() {
   };
 
   const handleDeduct = (amount, customerId) => {
-    if (!customerId) return;
-    applyToAccount(customerId, (prev) => {
+    if (!customerId) return Promise.resolve();
+    return applyToAccount(customerId, (prev) => {
       let remaining = amount;
       const usedPoints = Math.min(prev.pointBalance || 0, remaining);
       remaining -= usedPoints;
@@ -395,6 +414,8 @@ export default function App() {
               customers={customers}
               onRegisterCustomer={handleRegisterCustomer}
               onFetchCustomerDetail={getAccountOnce}
+              onSetCustomerStatus={handleSetCustomerStatus}
+              onDeleteCustomer={handleDeleteCustomer}
             />
             <div className="max-w-md mx-auto px-4 pb-6">
               <button
@@ -443,6 +464,17 @@ export default function App() {
       ) : !accountLoaded ? (
         <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
           <div className="text-sm" style={{ color: C.mute }}>読み込み中…</div>
+        </div>
+      ) : account.status && account.status !== "active" ? (
+        <div className="max-w-md mx-auto px-4 pt-8">
+          <div className="rounded-2xl p-4 text-center" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+            <div className="text-sm font-bold" style={{ color: C.ink }}>
+              現在このアカウントはご利用いただけません
+            </div>
+            <div className="text-[12px] mt-2" style={{ color: C.mute }}>
+              詳しくは導入店舗までお問い合わせください
+            </div>
+          </div>
         </div>
       ) : (
         <CustomerView
