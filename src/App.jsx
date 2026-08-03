@@ -10,6 +10,8 @@ import {
   listCustomers,
   getStoreSettings,
   saveStoreSettings,
+  getStoreSecrets,
+  saveStoreSecrets,
   setCustomerStatus,
   deleteCustomerPermanently,
   reissueCustomerAccess,
@@ -244,6 +246,16 @@ export default function App() {
     getStoreSettings().then(setStoreSettingsState);
   }, [mode]);
 
+  // Sensitive credentials (LINE API keys etc.) — only fetched once the
+  // store staff is actually signed in, since the security rules restrict
+  // this node to email-authenticated users.
+  const [storeSecrets, setStoreSecretsState] = useState({});
+  useEffect(() => {
+    if (mode === "store" && authUser) {
+      getStoreSecrets().then(setStoreSecretsState);
+    }
+  }, [mode, authUser]);
+
   // rankingEnabled/weatherEnabled used to be local, per-device state, which
   // meant toggling them in store settings never actually reached the
   // customer's screen (each device had its own default). They now live in
@@ -300,6 +312,11 @@ export default function App() {
   const handleSaveStoreSettings = async (updates) => {
     await saveStoreSettings(updates);
     setStoreSettingsState((prev) => ({ ...prev, ...updates }));
+  };
+
+  const handleSaveStoreSecrets = async (updates) => {
+    await saveStoreSecrets(updates);
+    setStoreSecretsState((prev) => ({ ...prev, ...updates }));
   };
 
   const handleSetRankingEnabled = (value) => handleSaveStoreSettings({ rankingEnabled: value });
@@ -634,6 +651,8 @@ export default function App() {
               storeSettings={storeSettings}
               onSaveStoreSettings={handleSaveStoreSettings}
               onSendPush={handleSendPush}
+              storeSecrets={storeSecrets}
+              onSaveStoreSecrets={handleSaveStoreSecrets}
             />
             <div className="max-w-md mx-auto px-4 pb-6">
               <button
@@ -706,6 +725,7 @@ export default function App() {
           storeSettings={storeSettings}
           notifyOptIn={account.notifyOptIn || null}
           onUpdateNotifyPrefs={(prefs) => handleUpdateNotifyPrefs(myCustomerId, prefs)}
+          lineUserId={account.lineUserId || null}
         />
       )}
     </div>
