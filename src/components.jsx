@@ -56,6 +56,16 @@ const RANKS = [
   { name: "プラチナ", rate: 10, threshold: 200000 },
 ];
 
+// Recommended embed sizes for store branding uploads — kept in one place so
+// the settings screen's guidance text and the actual header/hero rendering agree.
+const BRANDING_SIZES = {
+  logoWidth: 180, // px — the horizontal logo fills this width, height fixed below
+  logoHeight: 36, // px — matches the icon's height so the header doesn't jump
+  iconSize: 200, // px — recommended square upload size for the icon (displayed smaller)
+  heroWidth: 800, // px — recommended width for the customer-side hero banner
+  heroHeight: 280, // px — recommended height for the customer-side hero banner
+};
+
 function GachaSettings() {
   const [rows, setRows] = useState([
     { id: 1, rate: 5, weight: 50 },
@@ -1392,7 +1402,7 @@ function LineSettings({ lineUrl, onSave }) {
   }, [lineUrl]);
 
   const save = async () => {
-    await onSave(value.trim());
+    await onSave({ lineUrl: value.trim() });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -1428,7 +1438,288 @@ function LineSettings({ lineUrl, onSave }) {
   );
 }
 
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, lineUrl, onSaveLineUrl }) {
+// ---------------- STORE BRANDING SETTINGS ----------------
+function compressImage(file, maxDim, quality, onDone, onError) {
+  const reader = new FileReader();
+  reader.onerror = () => onError && onError();
+  reader.onload = () => {
+    const img = new Image();
+    img.onerror = () => onError && onError();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      onDone(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function ImageUploadButton({ id, label, currentImage, onImageReady, maxDim = 800 }) {
+  const [error, setError] = useState(null);
+  return (
+    <div>
+      <label htmlFor={id}>
+        <input
+          type="file"
+          accept="image/*"
+          id={id}
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            setError(null);
+            compressImage(
+              file,
+              maxDim,
+              0.8,
+              (dataUrl) => onImageReady(dataUrl),
+              () => setError("画像の読み込みに失敗しました")
+            );
+          }}
+        />
+        <span
+          className="block w-full text-center rounded-lg py-2 text-[11px] font-semibold cursor-pointer"
+          style={{ background: currentImage ? C.coralSoft : C.cream, color: currentImage ? C.coral : C.ink }}
+        >
+          {currentImage ? `✓ ${label}(変更する)` : label}
+        </span>
+      </label>
+      {error && <div className="mt-1 text-[10px]" style={{ color: C.coral }}>{error}</div>}
+    </div>
+  );
+}
+
+function StoreBrandingSettings({ storeSettings, onSave }) {
+  const [brandMode, setBrandMode] = useState(storeSettings.brandMode || "default");
+  const [logoImage, setLogoImage] = useState(storeSettings.logoImage || null);
+  const [iconImage, setIconImage] = useState(storeSettings.iconImage || null);
+  const [iconShape, setIconShape] = useState(storeSettings.iconShape || "circle");
+  const [storeName, setStoreName] = useState(storeSettings.storeName || "");
+  const [storeNameFont, setStoreNameFont] = useState(storeSettings.storeNameFont || "gothic");
+  const [storeNameWeight, setStoreNameWeight] = useState(storeSettings.storeNameWeight || "normal");
+  const [heroImage, setHeroImage] = useState(storeSettings.heroImage || null);
+  const [showHeroOnCustomer, setShowHeroOnCustomer] = useState(storeSettings.showHeroOnCustomer || false);
+  const [saved, setSaved] = useState(false);
+
+  const save = async () => {
+    await onSave({
+      brandMode,
+      logoImage,
+      iconImage,
+      iconShape,
+      storeName,
+      storeNameFont,
+      storeNameWeight,
+      heroImage,
+      showHeroOnCustomer,
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  return (
+    <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+      <div className="text-sm font-bold" style={{ color: C.ink }}>お店のアイコン・名前</div>
+      <div className="text-[11px] mt-1" style={{ color: C.mute }}>
+        ヘッダーの表示(今のピコのアイコン〜「PicoPay」の文字がある幅)を、お店独自のロゴまたはアイコン+店舗名に差し替えられます
+      </div>
+
+      <div className="mt-3 flex gap-2">
+        {[
+          { key: "logo", label: "ロゴのみ" },
+          { key: "iconName", label: "アイコン+店舗名" },
+        ].map((o) => (
+          <button
+            key={o.key}
+            onClick={() => setBrandMode(o.key)}
+            className="flex-1 rounded-lg py-2 text-[11px] font-semibold"
+            style={
+              brandMode === o.key
+                ? { background: C.teal, color: "#fff" }
+                : { background: C.cream, color: C.mute }
+            }
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+
+      {brandMode === "logo" && (
+        <div className="mt-3">
+          <div className="text-[10px]" style={{ color: C.mute }}>
+            推奨サイズ:横{BRANDING_SIZES.logoWidth}px × 縦{BRANDING_SIZES.logoHeight}px(横長のロゴがこの枠にぴったり収まります)
+          </div>
+          <div className="mt-1">
+            <ImageUploadButton
+              id="branding-logo"
+              label="ロゴ画像をアップロード"
+              currentImage={logoImage}
+              onImageReady={setLogoImage}
+              maxDim={BRANDING_SIZES.logoWidth * 3}
+            />
+          </div>
+          {logoImage && (
+            <div className="mt-2 flex justify-center rounded-lg p-3" style={{ background: C.cream }}>
+              <img
+                src={logoImage}
+                alt="ロゴプレビュー"
+                style={{ height: BRANDING_SIZES.logoHeight, maxWidth: BRANDING_SIZES.logoWidth, objectFit: "contain" }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {brandMode === "iconName" && (
+        <div className="mt-3 space-y-2">
+          <div className="text-[11px] font-semibold" style={{ color: C.ink }}>アイコンの形</div>
+          <div className="flex gap-2">
+            {[
+              { key: "circle", label: "丸" },
+              { key: "square", label: "四角(角丸)" },
+            ].map((o) => (
+              <button
+                key={o.key}
+                onClick={() => setIconShape(o.key)}
+                className="flex-1 rounded-lg py-2 text-[11px] font-semibold"
+                style={
+                  iconShape === o.key
+                    ? { background: C.teal, color: "#fff" }
+                    : { background: C.cream, color: C.mute }
+                }
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <div className="text-[10px]" style={{ color: C.mute }}>
+            推奨サイズ:{BRANDING_SIZES.iconSize}px × {BRANDING_SIZES.iconSize}px の正方形画像
+          </div>
+          <ImageUploadButton
+            id="branding-icon"
+            label="アイコン画像をアップロード"
+            currentImage={iconImage}
+            onImageReady={setIconImage}
+            maxDim={BRANDING_SIZES.iconSize}
+          />
+
+          <input
+            value={storeName}
+            onChange={(e) => setStoreName(e.target.value)}
+            placeholder="お店の名前"
+            className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+            style={{ background: C.cream, color: C.ink }}
+          />
+
+          <div className="text-[11px] font-semibold" style={{ color: C.ink }}>フォント</div>
+          <div className="flex gap-2">
+            {[
+              { key: "gothic", label: "ゴシック" },
+              { key: "mincho", label: "明朝" },
+            ].map((o) => (
+              <button
+                key={o.key}
+                onClick={() => setStoreNameFont(o.key)}
+                className="flex-1 rounded-lg py-2 text-[11px] font-semibold"
+                style={
+                  storeNameFont === o.key
+                    ? { background: C.teal, color: "#fff" }
+                    : { background: C.cream, color: C.mute }
+                }
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="text-[11px] font-semibold" style={{ color: C.ink }}>太さ</div>
+          <div className="flex gap-2">
+            {[
+              { key: "bold", label: "太字" },
+              { key: "normal", label: "標準" },
+            ].map((o) => (
+              <button
+                key={o.key}
+                onClick={() => setStoreNameWeight(o.key)}
+                className="flex-1 rounded-lg py-2 text-[11px] font-semibold"
+                style={
+                  storeNameWeight === o.key
+                    ? { background: C.teal, color: "#fff" }
+                    : { background: C.cream, color: C.mute }
+                }
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+
+          {iconImage && storeName && (
+            <div className="flex items-center gap-2 rounded-lg p-3" style={{ background: C.cream }}>
+              <div
+                className="h-9 w-9 overflow-hidden shrink-0"
+                style={{ borderRadius: iconShape === "square" ? 10 : 9999 }}
+              >
+                <img src={iconImage} alt="preview" className="h-9 w-9 object-cover" />
+              </div>
+              <div
+                className="text-[15px]"
+                style={{
+                  color: C.ink,
+                  fontFamily: storeNameFont === "mincho" ? "'Hiragino Mincho ProN', serif" : "'Hiragino Sans', sans-serif",
+                  fontWeight: storeNameWeight === "bold" ? 700 : 500,
+                }}
+              >
+                {storeName}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="mt-4 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
+        <div className="text-[11px] font-semibold" style={{ color: C.ink }}>お客様画面のヒーロー画像</div>
+        <div className="text-[10px] mt-1" style={{ color: C.mute }}>
+          推奨サイズ:横{BRANDING_SIZES.heroWidth}px × 縦{BRANDING_SIZES.heroHeight}px。お客様の決済画面の一番上に、お店の写真などを大きく表示できます
+        </div>
+        <div className="mt-1">
+          <ImageUploadButton
+            id="branding-hero"
+            label="ヒーロー画像をアップロード"
+            currentImage={heroImage}
+            onImageReady={setHeroImage}
+            maxDim={BRANDING_SIZES.heroWidth}
+          />
+        </div>
+        {heroImage && (
+          <img src={heroImage} alt="ヒーロープレビュー" className="mt-2 w-full rounded-lg" />
+        )}
+        <label className="mt-2 flex items-center justify-between text-[12px]" style={{ color: C.ink }}>
+          <span>お客様画面にこの画像を表示する</span>
+          <input
+            type="checkbox"
+            checked={showHeroOnCustomer}
+            onChange={(e) => setShowHeroOnCustomer(e.target.checked)}
+          />
+        </label>
+      </div>
+
+      <button
+        onClick={save}
+        className="mt-4 w-full rounded-full py-2.5 text-sm font-bold"
+        style={{ background: C.teal, color: "#fff" }}
+      >
+        {saved ? "✓ 保存しました" : "保存"}
+      </button>
+    </div>
+  );
+}
+
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, lineUrl, storeSettings = {}, onSaveStoreSettings }) {
   const [tab, setTab] = useState("dashboard");
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
@@ -1662,7 +1953,8 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
           <RankSettings rankingEnabled={rankingEnabled} setRankingEnabled={setRankingEnabled} />
           <SystemSafetySettings />
           <WeatherCampaignSettings weatherEnabled={weatherEnabled} setWeatherEnabled={setWeatherEnabled} />
-          <LineSettings lineUrl={lineUrl} onSave={onSaveLineUrl} />
+          <LineSettings lineUrl={lineUrl} onSave={onSaveStoreSettings} />
+          <StoreBrandingSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
         </>
       )}
 
@@ -1692,7 +1984,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
 }
 
 // ---------------- CUSTOMER VIEW ----------------
-function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusSpin, history, rankingEnabled, customerId }) {
+function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusSpin, history, rankingEnabled, customerId, storeSettings = {} }) {
   const [spinning, setSpinning] = useState(false);
   const [result, setResult] = useState(null);
   const [openDate, setOpenDate] = useState(null);
@@ -1730,6 +2022,17 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
 
   return (
     <div className="max-w-md mx-auto px-4 pb-10">
+      {/* Store hero image — configured by the store, customer can't toggle it */}
+      {storeSettings.showHeroOnCustomer && storeSettings.heroImage && (
+        <div className="mt-4 rounded-2xl overflow-hidden">
+          <img
+            src={storeSettings.heroImage}
+            alt="お店の画像"
+            style={{ width: "100%", aspectRatio: `${BRANDING_SIZES.heroWidth} / ${BRANDING_SIZES.heroHeight}`, objectFit: "cover" }}
+          />
+        </div>
+      )}
+
       {/* Rank banner */}
       {rankingEnabled && (
         <div
@@ -1913,4 +2216,4 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
   );
 }
 
-export { C, PICO, mockCustomers, RANK_META, RANKS, StoreView, CustomerView };
+export { C, PICO, mockCustomers, RANK_META, RANKS, BRANDING_SIZES, StoreView, CustomerView };
