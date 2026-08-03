@@ -407,141 +407,45 @@ function DepositBonusSettings({ storeSettings, onSave }) {
 }
 
 // ---------------- POINT SETTINGS (purchase-based) ----------------
-function PointSettings({ storeSettings, onSave }) {
-  const [enabled, setEnabled] = useState(storeSettings.purchasePointEnabled ?? true);
-  const [flatMode, setFlatMode] = useState(storeSettings.purchasePointFlatMode ?? true);
-  const [flatRate, setFlatRate] = useState(storeSettings.purchasePointFlatRate ?? 5);
-  const [tiers, setTiers] = useState(
-    storeSettings.purchasePointTiers || [
-      { upTo: 3000, rate: 3 },
-      { upTo: 10000, rate: 5 },
-      { upTo: null, rate: 8 }, // null upTo = それ以上
-    ]
-  );
-  const [saved, setSaved] = useState(false);
-
-  const updateTier = (i, key, value) => {
-    setTiers((ts) => ts.map((t, idx) => (idx === i ? { ...t, [key]: value } : t)));
-  };
-
-  const save = async () => {
-    await onSave({
-      purchasePointEnabled: enabled,
-      purchasePointFlatMode: flatMode,
-      purchasePointFlatRate: Number(flatRate),
-      purchasePointTiers: tiers,
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
-
+function PointSettings() {
+  const [rate, setRate] = useState(5);
   return (
     <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Gift size={16} style={{ color: C.teal }} />
-          <span className="text-sm font-bold" style={{ color: C.ink }}>購入ポイント(商品購入時)</span>
-        </div>
-        <button
-          onClick={() => setEnabled(!enabled)}
-          className="relative w-11 h-6 rounded-full transition-colors shrink-0"
-          style={{ background: enabled ? C.teal : C.line }}
-        >
-          <span
-            className="absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform"
-            style={{ transform: enabled ? "translateX(22px)" : "translateX(2px)" }}
-          />
-        </button>
+      <div className="flex items-center gap-2">
+        <Gift size={16} style={{ color: C.teal }} />
+        <span className="text-sm font-bold" style={{ color: C.ink }}>ポイント設定(商品購入時)</span>
       </div>
       <div className="text-[11px] mt-1" style={{ color: C.mute }}>
-        チャージ時のボーナスとは別に、実際のお買い物・お会計時に付与するポイント還元率です
+        チャージ時のボーナスガチャとは別に、実際のお買い物・お会計時に付与するポイント還元率です。
       </div>
-
-      {enabled && (
-        <>
-          <label className="mt-3 flex items-center justify-between text-[12px] rounded-xl p-3" style={{ background: C.cream, color: C.ink }}>
-            <span>全ての購入に一律の還元率をつける</span>
-            <input type="checkbox" checked={flatMode} onChange={(e) => setFlatMode(e.target.checked)} />
-          </label>
-
-          {flatMode ? (
-            <div className="mt-2 flex items-center gap-3">
-              <div className="flex items-center rounded-lg flex-1" style={{ background: C.cream }}>
-                <input
-                  type="number"
-                  value={flatRate}
-                  onChange={(e) => setFlatRate(e.target.value)}
-                  className="w-full bg-transparent px-3 py-2 text-lg font-bold outline-none"
-                  style={{ color: C.ink }}
-                />
-                <span className="pr-3 text-sm font-semibold" style={{ color: C.mute }}>%</span>
-              </div>
-              <div className="text-[11px]" style={{ color: C.mute }}>
-                例:¥2,000のお買い物 → P{Math.round(2000 * (flatRate / 100))}
-              </div>
-            </div>
-          ) : (
-            <div className="mt-2 space-y-2">
-              {tiers.map((t, i) => (
-                <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                  <div className="col-span-7 flex items-center rounded-lg" style={{ background: C.cream }}>
-                    {t.upTo === null ? (
-                      <span className="px-3 py-2 text-sm" style={{ color: C.mute }}>それ以上</span>
-                    ) : (
-                      <>
-                        <input
-                          type="number"
-                          value={t.upTo}
-                          onChange={(e) => updateTier(i, "upTo", Number(e.target.value))}
-                          className="w-full bg-transparent px-3 py-2 text-sm font-semibold outline-none"
-                          style={{ color: C.ink }}
-                        />
-                        <span className="pr-3 text-xs font-semibold" style={{ color: C.mute }}>円まで</span>
-                      </>
-                    )}
-                  </div>
-                  <div className="col-span-5 flex items-center rounded-lg" style={{ background: C.cream }}>
-                    <input
-                      type="number"
-                      value={t.rate}
-                      onChange={(e) => updateTier(i, "rate", Number(e.target.value))}
-                      className="w-full bg-transparent px-2 py-2 text-sm font-semibold outline-none"
-                      style={{ color: C.ink }}
-                    />
-                    <span className="pr-2 text-xs font-semibold" style={{ color: C.mute }}>%</span>
-                  </div>
-                </div>
-              ))}
-              <div className="text-[10px]" style={{ color: C.mute }}>
-                ※購入金額に応じて、該当する一番上の段階の還元率が適用されます
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
+      <div className="mt-3 flex items-center gap-3">
+        <div className="flex items-center rounded-lg flex-1" style={{ background: C.cream }}>
+          <input
+            type="number"
+            value={rate}
+            onChange={(e) => setRate(e.target.value)}
+            className="w-full bg-transparent px-3 py-2 text-lg font-bold outline-none"
+            style={{ color: C.ink }}
+          />
+          <span className="pr-3 text-sm font-semibold" style={{ color: C.mute }}>%</span>
+        </div>
+        <div className="text-[11px]" style={{ color: C.mute }}>
+          例:¥2,000のお買い物 → P{Math.round(2000 * (rate / 100))}
+        </div>
+      </div>
       <button
-        onClick={save}
         className="mt-3 w-full rounded-full py-2 text-sm font-bold"
         style={{ background: C.teal, color: "#fff" }}
       >
-        {saved ? "✓ 保存しました" : "保存"}
+        保存
       </button>
     </div>
   );
 }
 
 // ---------------- SYSTEM SAFETY SETTINGS (daily cap, unrelated to bonus tables) ----------------
-function SystemSafetySettings({ storeSettings, onSave }) {
-  const [dailyCap, setDailyCap] = useState(storeSettings.dailyChargeCap ?? 100000);
-  const [saved, setSaved] = useState(false);
-
-  const save = async () => {
-    await onSave({ dailyChargeCap: Number(dailyCap) });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
-
+function SystemSafetySettings() {
+  const [dailyCap, setDailyCap] = useState(100000);
   return (
     <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
       <div className="flex items-center gap-2">
@@ -568,36 +472,22 @@ function SystemSafetySettings({ storeSettings, onSave }) {
         </div>
       </div>
       <button
-        onClick={save}
         className="mt-3 w-full rounded-full py-2 text-sm font-bold"
         style={{ background: C.teal, color: "#fff" }}
       >
-        {saved ? "✓ 保存しました" : "保存"}
+        保存
       </button>
     </div>
   );
 }
 
 // ---------------- WEATHER-LINKED GUERRILLA CAMPAIGN SETTINGS ----------------
-function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled, storeSettings, onSave }) {
-  const [area, setArea] = useState(storeSettings.weatherArea || "埼玉県飯能市");
-  const [rainThreshold, setRainThreshold] = useState(storeSettings.weatherRainThreshold ?? 60);
-  const [autoMode, setAutoMode] = useState(storeSettings.weatherAutoMode || "confirm"); // "confirm" | "auto"
-  const [rate, setRate] = useState(storeSettings.weatherRate ?? 20);
-  const [cap, setCap] = useState(storeSettings.weatherCap ?? 50000);
-  const [saved, setSaved] = useState(false);
-
-  const save = async () => {
-    await onSave({
-      weatherArea: area,
-      weatherRainThreshold: Number(rainThreshold),
-      weatherAutoMode: autoMode,
-      weatherRate: Number(rate),
-      weatherCap: Number(cap),
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
+function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled }) {
+  const [area, setArea] = useState("埼玉県飯能市");
+  const [rainThreshold, setRainThreshold] = useState(60);
+  const [autoMode, setAutoMode] = useState("confirm"); // "confirm" | "auto"
+  const [rate, setRate] = useState(20);
+  const [cap, setCap] = useState(50000);
 
   return (
     <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
@@ -709,11 +599,10 @@ function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled, storeSetti
           </div>
 
           <button
-            onClick={save}
             className="mt-4 w-full rounded-full py-2.5 text-sm font-bold"
             style={{ background: C.teal, color: "#fff" }}
           >
-            {saved ? "✓ 保存しました" : "保存"}
+            保存
           </button>
         </>
       )}
@@ -721,36 +610,22 @@ function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled, storeSetti
   );
 }
 // ---------------- RANK SETTINGS (Silver/Gold/Platinum) ----------------
-function RankSettings({ rankingEnabled, setRankingEnabled, storeSettings, onSave }) {
-  const [showTable, setShowTable] = useState(!!storeSettings.rankTiers);
-  const [decideMode, setDecideMode] = useState(storeSettings.rankDecideMode || "manual"); // "manual" | "total" | "period"
-  const [useVisitCount, setUseVisitCount] = useState(storeSettings.rankUseVisitCount || false);
-  const [evalMethod, setEvalMethod] = useState(storeSettings.rankEvalMethod || "combined"); // "combined" | "amountOnly" | "visitOnly"
-  const [ranks, setRanks] = useState(
-    storeSettings.rankTiers || [
-      { name: "シルバー", rate: 3, threshold: 0, visitThreshold: 0 },
-      { name: "ゴールド", rate: 5, threshold: 50000, visitThreshold: 2 },
-      { name: "プラチナ", rate: 8, threshold: 200000, visitThreshold: 4 },
-    ]
-  );
-  const [saved, setSaved] = useState(false);
+function RankSettings({ rankingEnabled, setRankingEnabled }) {
+  const [showTable, setShowTable] = useState(false);
+  const [decideMode, setDecideMode] = useState("manual"); // "manual" | "total" | "period"
+  const [useVisitCount, setUseVisitCount] = useState(false);
+  const [evalMethod, setEvalMethod] = useState("combined"); // "combined" | "amountOnly" | "visitOnly"
+  const [ranks, setRanks] = useState([
+    { name: "シルバー", rate: 3, threshold: 0, visitThreshold: 0 },
+    { name: "ゴールド", rate: 5, threshold: 50000, visitThreshold: 2 },
+    { name: "プラチナ", rate: 8, threshold: 200000, visitThreshold: 4 },
+  ]);
 
   const updateRank = (i, key, value) => {
     setRanks((rs) => rs.map((r, idx) => (idx === i ? { ...r, [key]: value } : r)));
   };
 
   const autoOn = decideMode !== "manual";
-
-  const save = async () => {
-    await onSave({
-      rankTiers: ranks,
-      rankDecideMode: decideMode,
-      rankUseVisitCount: useVisitCount,
-      rankEvalMethod: evalMethod,
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
 
   return (
     <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
@@ -911,11 +786,10 @@ function RankSettings({ rankingEnabled, setRankingEnabled, storeSettings, onSave
           )}
 
           <button
-            onClick={save}
             className="mt-4 w-full rounded-full py-2.5 text-sm font-bold"
             style={{ background: C.teal, color: "#fff" }}
           >
-            {saved ? "✓ 保存しました" : "会員ランク設定を保存"}
+            会員ランク設定を保存
           </button>
         </>
       )}
@@ -1165,14 +1039,14 @@ function ChargeScreen({ onCharge, onDeduct }) {
 
 
 // ---------------- CUSTOMER REGISTRATION ----------------
-function CustomerRegistration({ onDone, onRegister, existingCustomers }) {
+function CustomerRegistration({ onDone, onRegister, existingCustomers, lineUrl }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [referredBy, setReferredBy] = useState("");
   const [issueMethod, setIssueMethod] = useState("qr"); // "qr" | "card"
   const [requireVerification, setRequireVerification] = useState(true);
-  const [notify, setNotify] = useState({ email: true });
+  const [notify, setNotify] = useState({ email: true, line: true });
   const [issued, setIssued] = useState(null);
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState(null);
@@ -1236,6 +1110,22 @@ function CustomerRegistration({ onDone, onRegister, existingCustomers }) {
         <div className="text-[10px] mt-1" style={{ color: C.mute }}>
           このQRはお客様の初回設定用です(決済用QRとは別物です)
         </div>
+
+        {notify.line && lineUrl && (
+          <div className="mt-3 rounded-xl p-3" style={{ background: "#fff" }}>
+            <div className="text-[11px] font-semibold" style={{ color: C.ink }}>
+              LINE通知を受け取るには、お客様のスマホでこちらを読み取って友だち追加してください
+            </div>
+            <div className="mt-2 flex justify-center">
+              <QRCodeSVG value={lineUrl} size={80} level="M" />
+            </div>
+          </div>
+        )}
+        {notify.line && !lineUrl && (
+          <div className="mt-3 rounded-xl p-3 text-[11px]" style={{ background: "#fff", color: C.mute }}>
+            LINE公式アカウントが未設定です。設定タブから登録すると、ここにQRコードが表示されます
+          </div>
+        )}
 
         <button
           onClick={onDone}
@@ -1328,6 +1218,14 @@ function CustomerRegistration({ onDone, onRegister, existingCustomers }) {
             onChange={(e) => setNotify((n) => ({ ...n, email: e.target.checked }))}
           />
           メール通知
+        </label>
+        <label className="flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            checked={notify.line}
+            onChange={(e) => setNotify((n) => ({ ...n, line: e.target.checked }))}
+          />
+          LINE通知(友だち追加が必要)
         </label>
       </div>
 
@@ -1675,406 +1573,188 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
   );
 }
 
-// ---------------- BROADCAST (配信) — shared UI for a broadcast channel ----------------
-// Sending push notifications goes through a server-side function (Netlify
-// Functions + Firebase Cloud Messaging, see App.jsx's handleSendPush) that
-// actually delivers the message. Group management and history are handled
-// entirely here.
-const MAX_BROADCAST_GROUPS = 10;
+// ---------------- LINE SETTINGS ----------------
+function LineSettings({ lineUrl, onSave }) {
+  const [value, setValue] = useState(lineUrl || "");
+  const [saved, setSaved] = useState(false);
 
-function ChannelBroadcastSection({ channelKey, channelLabel, customers, storeSettings, onSave, onSend }) {
-  const [body, setBody] = useState("");
-  const [showHistory, setShowHistory] = useState(false);
-  const [showGroupSend, setShowGroupSend] = useState(false);
-  const [showGroupCreate, setShowGroupCreate] = useState(false);
-  const [showGroupList, setShowGroupList] = useState(false);
-  const [selectedGroupIds, setSelectedGroupIds] = useState([]);
-  const [groupNameDraft, setGroupNameDraft] = useState("");
-  const [pickedCustomerIds, setPickedCustomerIds] = useState([]);
-  const [openGroupId, setOpenGroupId] = useState(null); // which group's 追加/削除 is open in the group list
-  const [groupAction, setGroupAction] = useState(null); // "add" | "remove"
-  const [addPickIds, setAddPickIds] = useState([]);
-  const [removePickIds, setRemovePickIds] = useState([]);
+  useEffect(() => {
+    setValue(lineUrl || "");
+  }, [lineUrl]);
 
-  const historyKey = `${channelKey}BroadcastHistory`;
-  const groupsKey = `${channelKey}Groups`;
-  const history = storeSettings[historyKey] || [];
-  const groups = storeSettings[groupsKey] || [];
-
-  const optedIn = customers
-    .filter((c) => c.notifyOptIn?.[channelKey])
-    .sort((a, b) => (a.name || "").localeCompare(b.name || "", "ja"));
-
-  const [sendError, setSendError] = useState(null);
-  const [sending, setSending] = useState(false);
-
-  const logHistory = async (target, count) => {
-    const entry = { date: new Date().toLocaleDateString("ja-JP"), body, target, count };
-    await onSave({ [historyKey]: [entry, ...history].slice(0, 10) });
-  };
-
-  const tokensFor = (pool) => pool.flatMap((c) => c.pushTokens || []);
-
-  const sendToAll = async () => {
-    setSendError(null);
-    setSending(true);
-    try {
-      if (onSend) await onSend(tokensFor(optedIn), body);
-      await logHistory("全員", optedIn.length);
-      setBody("");
-    } catch (e) {
-      setSendError(e?.message || "送信に失敗しました");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const sendToGroups = async () => {
-    const pool = customers.filter((c) =>
-      selectedGroupIds.some((gid) => groups.find((g) => g.id === gid)?.customerIds.includes(c.id))
-    );
-    const targeted = pool.filter((c) => c.notifyOptIn?.[channelKey]);
-    const label = groups.filter((g) => selectedGroupIds.includes(g.id)).map((g) => g.name).join("・");
-    setSendError(null);
-    setSending(true);
-    try {
-      if (onSend) await onSend(tokensFor(targeted), body);
-      await logHistory(label, targeted.length);
-      setBody("");
-      setSelectedGroupIds([]);
-      setShowGroupSend(false);
-    } catch (e) {
-      setSendError(e?.message || "送信に失敗しました");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const createGroup = async () => {
-    if (!groupNameDraft.trim() || pickedCustomerIds.length === 0) return;
-    const newGroup = { id: `${channelKey}-grp-${Date.now()}`, name: groupNameDraft.trim(), customerIds: pickedCustomerIds };
-    await onSave({ [groupsKey]: [...groups, newGroup] });
-    setGroupNameDraft("");
-    setPickedCustomerIds([]);
-    setShowGroupCreate(false);
-  };
-
-  const deleteGroup = async (id) => {
-    await onSave({ [groupsKey]: groups.filter((g) => g.id !== id) });
-    setOpenGroupId(null);
-  };
-
-  const addMembers = async (id) => {
-    if (addPickIds.length === 0) return;
-    const next = groups.map((g) =>
-      g.id === id ? { ...g, customerIds: [...g.customerIds, ...addPickIds] } : g
-    );
-    await onSave({ [groupsKey]: next });
-    setAddPickIds([]);
-    setGroupAction(null);
-  };
-
-  const removeMembers = async (id) => {
-    if (removePickIds.length === 0) return;
-    const next = groups.map((g) =>
-      g.id === id ? { ...g, customerIds: g.customerIds.filter((cid) => !removePickIds.includes(cid)) } : g
-    );
-    await onSave({ [groupsKey]: next });
-    setRemovePickIds([]);
-    setGroupAction(null);
+  const save = async () => {
+    await onSave({ lineUrl: value.trim() });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
   };
 
   return (
     <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
-      <div className="text-sm font-bold" style={{ color: C.ink }}>{channelLabel}</div>
+      <div className="text-sm font-bold" style={{ color: C.ink }}>LINE公式アカウント連携</div>
       <div className="text-[11px] mt-1" style={{ color: C.mute }}>
-        通知の受け取りを許可しているお客様(現在{optedIn.length}名)にのみ届きます
+        ここに設定したURLのQRコードが、お客様登録完了画面に表示され、お客様がそのまま友だち追加できるようになります
       </div>
-
-      <textarea
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-        placeholder="配信内容を入力してください"
-        rows={4}
-        className="mt-3 w-full rounded-lg px-3 py-2 text-sm outline-none resize-none"
+      <input
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="LINE公式アカウントのURL(例: https://lin.ee/xxxxxxx)"
+        className="mt-3 w-full rounded-lg px-3 py-2 text-sm outline-none"
         style={{ background: C.cream, color: C.ink }}
       />
-
-      <div className="mt-2 grid grid-cols-2 gap-2">
-        <button
-          onClick={sendToAll}
-          disabled={!body.trim() || sending}
-          className="rounded-full py-2.5 text-sm font-bold"
-          style={{ background: body.trim() ? C.teal : C.line, color: body.trim() ? "#fff" : C.mute, opacity: sending ? 0.6 : 1 }}
-        >
-          {sending ? "送信中…" : "一斉配信"}
-        </button>
-        <button
-          onClick={() => setShowGroupSend((v) => !v)}
-          disabled={sending}
-          className="rounded-full py-2.5 text-sm font-bold"
-          style={{ background: C.cream, color: C.ink }}
-        >
-          グループ配信
-        </button>
-      </div>
-
-      {sendError && (
-        <div className="mt-2 text-[11px] font-semibold" style={{ color: C.coral }}>{sendError}</div>
-      )}
-
-      {showGroupSend && (
-        <div className="mt-2 rounded-xl p-3" style={{ background: C.cream }}>
-          {groups.length === 0 && (
-            <div className="text-[11px] text-center py-2" style={{ color: C.mute }}>配信グループがまだありません</div>
-          )}
-          {groups.map((g) => (
-            <label key={g.id} className="flex items-center justify-between py-1.5 text-[13px]" style={{ color: C.ink }}>
-              <span>{g.name}({g.customerIds.length}名)</span>
-              <input
-                type="checkbox"
-                checked={selectedGroupIds.includes(g.id)}
-                onChange={() =>
-                  setSelectedGroupIds((ids) => (ids.includes(g.id) ? ids.filter((x) => x !== g.id) : [...ids, g.id]))
-                }
-              />
-            </label>
-          ))}
-          {groups.length > 0 && (
-            <button
-              onClick={sendToGroups}
-              disabled={selectedGroupIds.length === 0 || !body.trim() || sending}
-              className="mt-2 w-full rounded-full py-2 text-sm font-bold"
-              style={{
-                background: selectedGroupIds.length > 0 && body.trim() ? C.teal : C.line,
-                color: selectedGroupIds.length > 0 && body.trim() ? "#fff" : C.mute,
-                opacity: sending ? 0.6 : 1,
-              }}
-            >
-              {sending ? "送信中…" : "配信する"}
-            </button>
-          )}
-        </div>
-      )}
-
-      <div className="mt-2 grid grid-cols-2 gap-2">
-        <button
-          onClick={() => { setShowGroupCreate((v) => !v); setShowGroupList(false); }}
-          disabled={groups.length >= MAX_BROADCAST_GROUPS}
-          className="rounded-full py-2 text-xs font-semibold"
-          style={{ background: C.cream, color: groups.length >= MAX_BROADCAST_GROUPS ? C.mute : C.ink }}
-        >
-          {groups.length >= MAX_BROADCAST_GROUPS ? "グループは最大10個まで" : "グループ作成"}
-        </button>
-        <button
-          onClick={() => { setShowGroupList((v) => !v); setShowGroupCreate(false); }}
-          className="rounded-full py-2 text-xs font-semibold"
-          style={{ background: C.cream, color: C.ink }}
-        >
-          グループ一覧
-        </button>
-      </div>
-
-      {showGroupCreate && (
-        <div className="mt-2 rounded-xl p-3" style={{ background: C.cream }}>
-          <input
-            value={groupNameDraft}
-            onChange={(e) => setGroupNameDraft(e.target.value)}
-            placeholder="グループ名"
-            className="w-full rounded-lg px-3 py-2 text-sm outline-none"
-            style={{ background: "#fff", color: C.ink }}
-          />
-          <div className="text-[10px] mt-2" style={{ color: C.mute }}>
-            {channelLabel}を許可しているお客様(あいうえお順)
+      {value && (
+        <div className="mt-3 flex justify-center">
+          <div className="rounded-lg bg-white p-3">
+            <QRCodeSVG value={value} size={100} level="M" />
           </div>
-          <div className="mt-1 max-h-52 overflow-y-auto rounded-lg" style={{ background: "#fff" }}>
-            {optedIn.length === 0 && (
-              <div className="text-[11px] text-center py-3" style={{ color: C.mute }}>対象のお客様がいません</div>
-            )}
-            {optedIn.map((c) => (
-              <label key={c.id} className="flex items-center justify-between px-3 py-2 text-[13px]" style={{ color: C.ink, borderBottom: `1px solid ${C.line}` }}>
-                <span>{c.name}</span>
-                <input
-                  type="checkbox"
-                  checked={pickedCustomerIds.includes(c.id)}
-                  onChange={() =>
-                    setPickedCustomerIds((ids) =>
-                      ids.includes(c.id) ? ids.filter((x) => x !== c.id) : [...ids, c.id]
-                    )
-                  }
-                />
-              </label>
-            ))}
-          </div>
-          <button
-            onClick={createGroup}
-            disabled={!groupNameDraft.trim() || pickedCustomerIds.length === 0}
-            className="mt-2 w-full rounded-full py-2 text-sm font-bold"
-            style={{
-              background: groupNameDraft.trim() && pickedCustomerIds.length > 0 ? C.teal : C.line,
-              color: groupNameDraft.trim() && pickedCustomerIds.length > 0 ? "#fff" : C.mute,
-            }}
-          >
-            グループ作成
-          </button>
         </div>
       )}
-
-      {showGroupList && (
-        <div className="mt-2 rounded-xl overflow-hidden" style={{ border: `1px solid ${C.line}` }}>
-          {groups.length === 0 && (
-            <div className="px-3 py-3 text-center text-[12px]" style={{ background: C.cream, color: C.mute }}>
-              まだ配信グループがありません
-            </div>
-          )}
-          {groups.map((g, i) => {
-            const memberSet = new Set(g.customerIds);
-            const nonMembers = optedIn.filter((c) => !memberSet.has(c.id));
-            const members = optedIn.filter((c) => memberSet.has(c.id));
-            return (
-              <div key={g.id} style={{ borderTop: i === 0 ? "none" : `1px solid ${C.line}` }}>
-                <button
-                  onClick={() => {
-                    setOpenGroupId(openGroupId === g.id ? null : g.id);
-                    setGroupAction(null);
-                    setAddPickIds([]);
-                    setRemovePickIds([]);
-                  }}
-                  className="w-full flex items-center justify-between px-3 py-2"
-                  style={{ background: C.paper }}
-                >
-                  <span className="text-sm font-semibold" style={{ color: C.ink }}>{g.name}({g.customerIds.length}名)</span>
-                  <ChevronRight size={14} style={{ color: C.mute, transform: openGroupId === g.id ? "rotate(90deg)" : "none" }} />
-                </button>
-                {openGroupId === g.id && (
-                  <div className="px-3 pb-3" style={{ background: C.cream }}>
-                    <div className="grid grid-cols-3 gap-2 pt-2">
-                      <button
-                        onClick={() => setGroupAction(groupAction === "add" ? null : "add")}
-                        className="rounded-full py-1.5 text-[11px] font-semibold"
-                        style={{ background: groupAction === "add" ? C.teal : "#fff", color: groupAction === "add" ? "#fff" : C.ink }}
-                      >
-                        追加
-                      </button>
-                      <button
-                        onClick={() => setGroupAction(groupAction === "remove" ? null : "remove")}
-                        className="rounded-full py-1.5 text-[11px] font-semibold"
-                        style={{ background: groupAction === "remove" ? C.coral : "#fff", color: groupAction === "remove" ? "#fff" : C.ink }}
-                      >
-                        削除
-                      </button>
-                      <button
-                        onClick={() => deleteGroup(g.id)}
-                        className="rounded-full py-1.5 text-[11px] font-semibold"
-                        style={{ background: "#fff", color: C.coral }}
-                      >
-                        グループ削除
-                      </button>
-                    </div>
-
-                    {groupAction === "add" && (
-                      <div className="mt-2">
-                        <div className="max-h-44 overflow-y-auto rounded-lg" style={{ background: "#fff" }}>
-                          {nonMembers.length === 0 && (
-                            <div className="text-[11px] text-center py-3" style={{ color: C.mute }}>追加できるお客様がいません</div>
-                          )}
-                          {nonMembers.map((c) => (
-                            <label key={c.id} className="flex items-center justify-between px-3 py-2 text-[13px]" style={{ color: C.ink, borderBottom: `1px solid ${C.line}` }}>
-                              <span>{c.name}</span>
-                              <input
-                                type="checkbox"
-                                checked={addPickIds.includes(c.id)}
-                                onChange={() =>
-                                  setAddPickIds((ids) => (ids.includes(c.id) ? ids.filter((x) => x !== c.id) : [...ids, c.id]))
-                                }
-                              />
-                            </label>
-                          ))}
-                        </div>
-                        <button
-                          onClick={() => addMembers(g.id)}
-                          disabled={addPickIds.length === 0}
-                          className="mt-2 w-full rounded-full py-2 text-xs font-bold"
-                          style={{ background: addPickIds.length > 0 ? C.teal : C.line, color: addPickIds.length > 0 ? "#fff" : C.mute }}
-                        >
-                          追加する
-                        </button>
-                      </div>
-                    )}
-
-                    {groupAction === "remove" && (
-                      <div className="mt-2">
-                        <div className="max-h-44 overflow-y-auto rounded-lg" style={{ background: "#fff" }}>
-                          {members.length === 0 && (
-                            <div className="text-[11px] text-center py-3" style={{ color: C.mute }}>メンバーがいません</div>
-                          )}
-                          {members.map((c) => (
-                            <label key={c.id} className="flex items-center justify-between px-3 py-2 text-[13px]" style={{ color: C.ink, borderBottom: `1px solid ${C.line}` }}>
-                              <span>{c.name}</span>
-                              <input
-                                type="checkbox"
-                                checked={removePickIds.includes(c.id)}
-                                onChange={() =>
-                                  setRemovePickIds((ids) => (ids.includes(c.id) ? ids.filter((x) => x !== c.id) : [...ids, c.id]))
-                                }
-                              />
-                            </label>
-                          ))}
-                        </div>
-                        <button
-                          onClick={() => removeMembers(g.id)}
-                          disabled={removePickIds.length === 0}
-                          className="mt-2 w-full rounded-full py-2 text-xs font-bold"
-                          style={{ background: removePickIds.length > 0 ? C.coral : C.line, color: removePickIds.length > 0 ? "#fff" : C.mute }}
-                        >
-                          削除する
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
       <button
-        onClick={() => setShowHistory((v) => !v)}
-        className="mt-2 w-full rounded-full py-2 text-xs font-semibold"
-        style={{ background: C.cream, color: C.ink }}
+        onClick={save}
+        className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
+        style={{ background: C.teal, color: "#fff" }}
       >
-        配信履歴
+        {saved ? "✓ 保存しました" : "保存"}
       </button>
-      {showHistory && (
-        <div className="mt-2 rounded-xl overflow-hidden" style={{ border: `1px solid ${C.line}` }}>
-          {history.length === 0 && (
-            <div className="px-3 py-3 text-center text-[12px]" style={{ background: C.cream, color: C.mute }}>
-              まだ配信履歴がありません
-            </div>
-          )}
-          {history.map((h, i) => (
-            <div key={i} className="px-3 py-2" style={{ background: C.paper, borderTop: i === 0 ? "none" : `1px solid ${C.line}` }}>
-              <div className="text-[10px]" style={{ color: C.mute }}>{h.date}・{h.target}({h.count}名)</div>
-              <div className="text-[11px]" style={{ color: C.ink }}>{h.body}</div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
-function BroadcastPanel({ customers, storeSettings, onSave, onSendPush }) {
+// ---------------- STORE BRANDING SETTINGS ----------------
+function compressImage(file, maxDim, quality, onDone, onError) {
+  const reader = new FileReader();
+  reader.onerror = () => onError && onError();
+  reader.onload = () => {
+    const img = new Image();
+    img.onerror = () => onError && onError();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      onDone(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function ImageUploadButton({ id, label, currentImage, onImageReady, maxDim = 800 }) {
+  const [error, setError] = useState(null);
   return (
-    <ChannelBroadcastSection
-      channelKey="push"
-      channelLabel="プッシュ通知"
-      customers={customers}
-      storeSettings={storeSettings}
-      onSave={onSave}
-      onSend={onSendPush}
-    />
+    <div>
+      <label htmlFor={id}>
+        <input
+          type="file"
+          accept="image/*"
+          id={id}
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            setError(null);
+            compressImage(
+              file,
+              maxDim,
+              0.8,
+              (dataUrl) => onImageReady(dataUrl),
+              () => setError("画像の読み込みに失敗しました")
+            );
+          }}
+        />
+        <span
+          className="block w-full text-center rounded-lg py-2 text-[11px] font-semibold cursor-pointer"
+          style={{ background: currentImage ? C.coralSoft : C.cream, color: currentImage ? C.coral : C.ink }}
+        >
+          {currentImage ? `✓ ${label}(変更する)` : label}
+        </span>
+      </label>
+      {error && <div className="mt-1 text-[10px]" style={{ color: C.coral }}>{error}</div>}
+    </div>
+  );
+}
+
+// ---------------- REFERRAL PROGRAM SETTINGS ----------------
+function ReferralSettings({ storeSettings, onSave }) {
+  const [enabled, setEnabled] = useState(storeSettings.referralEnabled || false);
+  const [referrerRate, setReferrerRate] = useState(storeSettings.referralReferrerRate ?? 10);
+  const [refereeRate, setRefereeRate] = useState(storeSettings.referralRefereeRate ?? 10);
+  const [saved, setSaved] = useState(false);
+
+  const save = async () => {
+    await onSave({
+      referralEnabled: enabled,
+      referralReferrerRate: Number(referrerRate),
+      referralRefereeRate: Number(refereeRate),
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  return (
+    <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-bold" style={{ color: C.ink }}>お友達紹介プログラム</div>
+        <button
+          onClick={() => setEnabled(!enabled)}
+          className="relative w-11 h-6 rounded-full transition-colors shrink-0"
+          style={{ background: enabled ? C.teal : C.line }}
+        >
+          <span
+            className="absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform"
+            style={{ transform: enabled ? "translateX(22px)" : "translateX(2px)" }}
+          />
+        </button>
+      </div>
+      <div className="text-[11px] mt-1" style={{ color: C.mute }}>
+        紹介されたお客様が初めてチャージした金額に応じて、紹介した人・された人の両方にポイントを付与します
+      </div>
+
+      {enabled && (
+        <>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <div>
+              <div className="text-[11px] font-semibold" style={{ color: C.ink }}>紹介した人への還元率</div>
+              <div className="mt-1 flex items-center rounded-lg" style={{ background: C.cream }}>
+                <input
+                  type="number"
+                  value={referrerRate}
+                  onChange={(e) => setReferrerRate(e.target.value)}
+                  className="w-full bg-transparent px-3 py-2 text-sm font-semibold outline-none"
+                  style={{ color: C.ink }}
+                />
+                <span className="pr-3 text-xs font-semibold" style={{ color: C.mute }}>%</span>
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] font-semibold" style={{ color: C.ink }}>紹介された人への還元率</div>
+              <div className="mt-1 flex items-center rounded-lg" style={{ background: C.cream }}>
+                <input
+                  type="number"
+                  value={refereeRate}
+                  onChange={(e) => setRefereeRate(e.target.value)}
+                  className="w-full bg-transparent px-3 py-2 text-sm font-semibold outline-none"
+                  style={{ color: C.ink }}
+                />
+                <span className="pr-3 text-xs font-semibold" style={{ color: C.mute }}>%</span>
+              </div>
+            </div>
+          </div>
+          <div className="text-[10px] mt-2" style={{ color: C.mute }}>
+            例:紹介された方が初回¥10,000チャージした場合、紹介者にP{Math.round(10000 * (referrerRate / 100))}・紹介された方にP{Math.round(10000 * (refereeRate / 100))}が付与されます
+          </div>
+        </>
+      )}
+
+      <button
+        onClick={save}
+        className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
+        style={{ background: C.teal, color: "#fff" }}
+      >
+        {saved ? "✓ 保存しました" : "保存"}
+      </button>
+    </div>
   );
 }
 
@@ -2324,18 +2004,13 @@ function StoreBrandingSettings({ storeSettings, onSave }) {
   );
 }
 
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, storeSettings = {}, onSaveStoreSettings, onSendPush }) {
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, lineUrl, storeSettings = {}, onSaveStoreSettings }) {
   const [tab, setTab] = useState("dashboard");
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [customerSearch, setCustomerSearch] = useState("");
-
-  // Switching tabs (概況/決済/配信/設定) should always start at the top —
-  // otherwise the page keeps whatever scroll position it had before.
-  useEffect(() => {
-    window.scrollTo(0, 0);
-  }, [tab]);
+  const [showLineQrModal, setShowLineQrModal] = useState(false);
 
   return (
     <div className="max-w-md mx-auto px-4 pb-24">
@@ -2390,6 +2065,85 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
         ))}
       </div>
 
+      {lineUrl && (
+        <button
+          onClick={() => setShowLineQrModal(true)}
+          className="mt-4 w-full rounded-2xl py-3 text-sm font-bold flex items-center justify-center gap-2"
+          style={{ background: "#06C755", color: "#fff" }}
+        >
+          お店のLINE QRコードを表示
+        </button>
+      )}
+
+      {showLineQrModal && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col px-6 py-6"
+          style={{ background: "#06C755" }}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {storeSettings.brandMode === "logo" && storeSettings.logoImage ? (
+                <img
+                  src={storeSettings.logoImage}
+                  alt="店舗ロゴ"
+                  style={{ height: BRANDING_SIZES.logoHeight, maxWidth: BRANDING_SIZES.logoWidth, objectFit: "contain" }}
+                />
+              ) : storeSettings.brandMode === "iconName" && storeSettings.iconImage && storeSettings.storeName ? (
+                <>
+                  <div
+                    className="h-9 w-9 overflow-hidden shrink-0"
+                    style={{ borderRadius: storeSettings.iconShape === "square" ? 10 : 9999 }}
+                  >
+                    <img src={storeSettings.iconImage} alt={storeSettings.storeName} className="h-9 w-9 object-cover" />
+                  </div>
+                  <div
+                    className="text-[15px] leading-none"
+                    style={{
+                      color: "#fff",
+                      fontFamily: storeSettings.storeNameFont === "mincho" ? "'Hiragino Mincho ProN', serif" : "'Hiragino Sans', sans-serif",
+                      fontWeight: storeSettings.storeNameWeight === "bold" ? 700 : 500,
+                    }}
+                  >
+                    {storeSettings.storeName}
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <div className="h-9 w-9 rounded-full overflow-hidden bg-white/20 flex items-center justify-center">
+                    <img src={PICO.logo} alt="ピコ" className="h-9 w-9 object-cover scale-125" />
+                  </div>
+                  <div className="text-[15px] font-bold text-white">PicoPay</div>
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => setShowLineQrModal(false)}
+              className="rounded-full px-4 py-2 text-xs font-semibold flex items-center gap-1"
+              style={{ background: "rgba(255,255,255,0.2)", color: "#fff" }}
+            >
+              <ChevronLeft size={14} /> 概況に戻る
+            </button>
+          </div>
+
+          <div className="flex-1 flex flex-col items-center justify-center">
+            <div className="text-white text-sm font-bold mb-4">友だち追加はこちらから</div>
+            <div className="rounded-2xl bg-white p-6">
+              <QRCodeSVG value={lineUrl} size={220} level="M" />
+            </div>
+            <button
+              onClick={() => {
+                setShowLineQrModal(false);
+                setTab("settings");
+              }}
+              className="mt-4 rounded-full px-5 py-2 text-xs font-semibold"
+              style={{ background: "rgba(255,255,255,0.2)", color: "#fff" }}
+            >
+              LINE URLを変更する
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Guerrilla campaign card — the "signature" element */}
       {weatherEnabled && (
         <div
@@ -2406,7 +2160,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
                 今日は雨予報 ☔ 配信しますか?
               </div>
               <div className="text-[11px] mt-1" style={{ color: C.mute }}>
-                5万円まで20%ボーナス・プッシュ通知で一斉配信
+                5万円まで20%ボーナス・LINE通知で一斉配信
               </div>
             </div>
           </div>
@@ -2452,6 +2206,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
               onRegister={onRegisterCustomer}
               onDone={() => setShowRegister(false)}
               existingCustomers={customers}
+              lineUrl={lineUrl}
             />
           )}
 
@@ -2533,27 +2288,19 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
 
       {tab === "settings" && (
         <>
-          <PointSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
-          <RankSettings rankingEnabled={rankingEnabled} setRankingEnabled={setRankingEnabled} storeSettings={storeSettings} onSave={onSaveStoreSettings} />
-          <ReferralSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
-          <DepositBonusSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <GachaSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
-          <SystemSafetySettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
-          <WeatherCampaignSettings weatherEnabled={weatherEnabled} setWeatherEnabled={setWeatherEnabled} storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+          <DepositBonusSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+          <PointSettings />
+          <RankSettings rankingEnabled={rankingEnabled} setRankingEnabled={setRankingEnabled} />
+          <SystemSafetySettings />
+          <WeatherCampaignSettings weatherEnabled={weatherEnabled} setWeatherEnabled={setWeatherEnabled} />
+          <LineSettings lineUrl={lineUrl} onSave={onSaveStoreSettings} />
+          <ReferralSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <StoreBrandingSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
         </>
       )}
 
       {tab === "pay" && <ChargeScreen onCharge={onCharge} onDeduct={onDeduct} />}
-
-      {tab === "notify" && (
-        <BroadcastPanel
-          customers={customers}
-          storeSettings={storeSettings}
-          onSave={onSaveStoreSettings}
-          onSendPush={onSendPush}
-        />
-      )}
 
       {/* Bottom nav */}
       <div
@@ -2579,21 +2326,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
 }
 
 // ---------------- CUSTOMER VIEW ----------------
-function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusSpin, history, rankingEnabled, customerId, storeSettings = {}, notifyOptIn, onUpdateNotifyPrefs }) {
-  const [showNotifySettings, setShowNotifySettings] = useState(false);
-  const [notifyDraft, setNotifyDraft] = useState({
-    push: notifyOptIn?.push || false,
-  });
-  const [notifySaved, setNotifySaved] = useState(false);
-  const [showPushHistory, setShowPushHistory] = useState(false);
-  const pushHistory = notifyOptIn?.pushHistory || [];
-
-  const saveNotifyPrefs = async () => {
-    await onUpdateNotifyPrefs(notifyDraft);
-    setNotifySaved(true);
-    setTimeout(() => setNotifySaved(false), 2000);
-  };
-
+function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusSpin, history, rankingEnabled, customerId, storeSettings = {} }) {
   const [spinning, setSpinning] = useState(false);
   const [result, setResult] = useState(null);
   const [openDate, setOpenDate] = useState(null);
@@ -2623,16 +2356,11 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
 
   const usableTotal = pointBalance + depositBalance;
 
-  // Use the store's saved rank tiers if they've configured any; otherwise
-  // fall back to the built-in default silver/gold/platinum tiers.
-  const effectiveRanks =
-    storeSettings.rankTiers && storeSettings.rankTiers.length > 0 ? storeSettings.rankTiers : RANKS;
-
   // Mock: this customer's cumulative purchase total used to compute rank progress
   const cumulativeSpend = 68000;
-  const currentRankIdx = [...effectiveRanks].reverse().findIndex((r) => cumulativeSpend >= r.threshold);
-  const currentRank = effectiveRanks[effectiveRanks.length - 1 - currentRankIdx];
-  const nextRank = effectiveRanks[effectiveRanks.indexOf(currentRank) + 1];
+  const currentRankIdx = [...RANKS].reverse().findIndex((r) => cumulativeSpend >= r.threshold);
+  const currentRank = RANKS[RANKS.length - 1 - currentRankIdx];
+  const nextRank = RANKS[RANKS.indexOf(currentRank) + 1];
 
   return (
     <div className="max-w-md mx-auto px-4 pb-10">
@@ -2808,7 +2536,7 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
           <div className="px-3 py-2 text-[11px] font-bold" style={{ background: C.cream, color: C.ink }}>
             会員ランク特典
           </div>
-          {effectiveRanks.map((r, i) => (
+          {RANKS.map((r, i) => (
             <div
               key={r.name}
               className="flex items-center justify-between px-3 py-2"
@@ -2841,67 +2569,6 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
           </div>
         </div>
       )}
-
-      {/* Notification preferences — collapsed by default */}
-      <div className="mt-5 rounded-2xl overflow-hidden" style={{ border: `1px solid ${C.line}` }}>
-        <button
-          onClick={() => setShowNotifySettings((v) => !v)}
-          className="w-full flex items-center justify-between px-4 py-3"
-          style={{ background: C.paper }}
-        >
-          <span className="text-sm font-bold" style={{ color: C.ink }}>通知設定</span>
-          <span className="text-[11px]" style={{ color: C.mute }}>{showNotifySettings ? "閉じる" : "設定する"}</span>
-        </button>
-        {showNotifySettings && (
-          <div className="px-4 py-3" style={{ background: C.cream }}>
-            <div className="text-[11px]" style={{ color: C.mute }}>
-              お店からのお知らせを受け取る方法を選んでください(何も選ばなければ届きません)
-            </div>
-
-            <label className="mt-2 flex items-center justify-between text-[13px]" style={{ color: C.ink }}>
-              <span>プッシュ通知を受け取る</span>
-              <input
-                type="checkbox"
-                checked={notifyDraft.push}
-                onChange={(e) => setNotifyDraft((d) => ({ ...d, push: e.target.checked }))}
-              />
-            </label>
-            <div className="text-[10px] mt-0.5" style={{ color: C.mute }}>
-              ホーム画面に追加しないとプッシュ通知は届きません
-            </div>
-            <button
-              onClick={() => setShowPushHistory((v) => !v)}
-              className="mt-1.5 text-[11px] font-semibold"
-              style={{ color: C.teal }}
-            >
-              {showPushHistory ? "プッシュ通知履歴を閉じる" : "プッシュ通知履歴"}
-            </button>
-            {showPushHistory && (
-              <div className="mt-1 rounded-lg overflow-hidden" style={{ border: `1px solid ${C.line}` }}>
-                {pushHistory.length === 0 && (
-                  <div className="px-3 py-3 text-center text-[11px]" style={{ background: C.paper, color: C.mute }}>
-                    まだ通知履歴がありません
-                  </div>
-                )}
-                {pushHistory.map((h, i) => (
-                  <div key={i} className="px-3 py-2 text-[11px]" style={{ background: C.paper, borderTop: i === 0 ? "none" : `1px solid ${C.line}`, color: C.ink }}>
-                    <div style={{ color: C.mute }} className="text-[10px]">{h.date}</div>
-                    {h.body}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <button
-              onClick={saveNotifyPrefs}
-              className="mt-3 w-full rounded-full py-2 text-sm font-bold"
-              style={{ background: C.teal, color: "#fff" }}
-            >
-              {notifySaved ? "✓ 確定しました" : "確定"}
-            </button>
-          </div>
-        )}
-      </div>
     </div>
   );
 }
