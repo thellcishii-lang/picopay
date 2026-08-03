@@ -165,7 +165,7 @@ export async function reissueCustomerAccess({ customerId, newPhone, idPhotoDataU
 // whatever profile fields were collected at registration. `phone` must be a
 // real number (E.164 format, e.g. +819012345678) since it's what the
 // customer will use to verify their identity later.
-export async function createAccount({ name, phone, email, requireVerification = true }) {
+export async function createAccount({ name, phone, email, requireVerification = true, referredBy = null }) {
   if (!phone) throw new Error("電話番号は必須です(お客様の本人確認に使います)");
   const customerId =
     "cust-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
@@ -177,6 +177,8 @@ export async function createAccount({ name, phone, email, requireVerification = 
     history: [],
     profile: { name, phone, email: email || null },
     requireVerification,
+    referredBy: referredBy || null,
+    referralBonusGiven: false,
   };
   await set(ref(db, `accounts/${customerId}`), account);
   return customerId;
