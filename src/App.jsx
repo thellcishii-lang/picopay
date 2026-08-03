@@ -8,6 +8,8 @@ import {
   saveAccount,
   createAccount,
   listCustomers,
+  getStoreSettings,
+  saveStoreSettings,
   setCustomerStatus,
   deleteCustomerPermanently,
   reissueCustomerAccess,
@@ -209,6 +211,7 @@ export default function App() {
   // Store-side view settings — per-device for now.
   const [rankingEnabled, setRankingEnabled] = useState(true);
   const [weatherEnabled, setWeatherEnabled] = useState(true);
+  const [lineUrl, setLineUrl] = useState("");
 
   // ---- Store-side: the full customer list ----
   const [customers, setCustomers] = useState([]);
@@ -217,8 +220,16 @@ export default function App() {
     setCustomers(list);
   }, []);
   useEffect(() => {
-    if (mode === "store" && authUser) refreshCustomers();
+    if (mode === "store" && authUser) {
+      refreshCustomers();
+      getStoreSettings().then((s) => setLineUrl(s.lineUrl || ""));
+    }
   }, [mode, authUser, refreshCustomers]);
+
+  const handleSaveLineUrl = async (url) => {
+    await saveStoreSettings({ lineUrl: url });
+    setLineUrl(url);
+  };
 
   const handleRegisterCustomer = async ({ name, phone, email, requireVerification }) => {
     const customerId = await createAccount({ name, phone, email, requireVerification });
@@ -423,6 +434,8 @@ export default function App() {
               onSetCustomerStatus={handleSetCustomerStatus}
               onDeleteCustomer={handleDeleteCustomer}
               onReissueCustomer={handleReissueCustomer}
+              lineUrl={lineUrl}
+              onSaveLineUrl={handleSaveLineUrl}
             />
             <div className="max-w-md mx-auto px-4 pb-6">
               <button
