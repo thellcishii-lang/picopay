@@ -2,7 +2,6 @@
 // This connects to the "PicoPay" Firebase project's Realtime Database and Authentication.
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, onValue, set, get, update, remove } from "firebase/database";
-import { getMessaging, getToken, isSupported as isMessagingSupported } from "firebase/messaging";
 import {
   getAuth,
   onAuthStateChanged,
@@ -26,50 +25,6 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const db = getDatabase(app);
 export const auth = getAuth(app);
-
-// ---- Push notifications (Web Push via Firebase Cloud Messaging) ----
-// Generated in Firebase console → Project settings → Cloud Messaging →
-// Web configuration → "Web Push certificates". This is safe to keep in
-// client code — it identifies the project, not a secret credential.
-const VAPID_KEY = "BKdzxi1YhwTVGdrLzaWou8govXVJu45ftEyWjG1huuOjs1ZfQ92v_2QSOS2AUa1eX7FhSI1sc5gaL14dxmdnoWA";
-
-// Asks the browser for notification permission and, if granted, returns
-// this device's FCM token (used to target push notifications at it).
-// Returns null if unsupported (e.g. desktop-only Safari) or not granted.
-export async function requestPushToken() {
-  const supported = await isMessagingSupported().catch(() => false);
-  if (!supported) return null;
-  if (!("serviceWorker" in navigator)) return null;
-
-  const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
-  const permission = await Notification.requestPermission();
-  if (permission !== "granted") return null;
-
-  const messaging = getMessaging(app);
-  try {
-    const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
-    return token || null;
-  } catch (e) {
-    return null;
-  }
-}
-
-// Calls the Netlify Function that actually dispatches the push (the real
-// Firebase Admin credentials only ever live on that server-side function,
-// never in this client code). Returns { successCount, failureCount } or
-// throws if the request itself failed.
-export async function sendPushNotification({ tokens, title, body, icon }) {
-  const res = await fetch("/.netlify/functions/send-push", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tokens, title, body, icon }),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || "送信リクエストに失敗しました");
-  }
-  return res.json();
-}
 
 // ---- Auth: store side (email/password) ----
 export function subscribeToAuth(callback) {
@@ -239,16 +194,15 @@ export async function listCustomers() {
     phone: acc.profile?.phone || null,
     email: acc.profile?.email || null,
     balance: (acc.pointBalance || 0) + (acc.depositBalance || 0),
-    notifyOptIn: acc.notifyOptIn || null,
-    pushTokens: acc.pushTokens || [],
   }));
 }
 
 export { DEFAULT_ACCOUNT };
 
 // ---- Store-level settings (shared across all store devices) ----
-// Branding (logo/icon/store name), the customer-side hero image, and other
-// store-wide configuration the store sets once and every device reads.
+// Currently just the LINE official account URL, used to generate a real
+// QR code for customers to add as a friend. Structured as a general object
+// so future store-branding fields (icon, name, etc.) can live here too.
 export async function getStoreSettings() {
   const snapshot = await get(ref(db, "storeSettings"));
   return snapshot.val() || {};
