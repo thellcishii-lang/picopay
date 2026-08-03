@@ -406,6 +406,135 @@ function DepositBonusSettings({ storeSettings, onSave }) {
   );
 }
 
+// ---------------- REFERRAL SETTINGS (お友達紹介) ----------------
+function ReferralSettings({ storeSettings, onSave }) {
+  const [enabled, setEnabled] = useState(storeSettings.referralEnabled ?? false);
+  const [referrerRate, setReferrerRate] = useState(storeSettings.referralReferrerRate ?? 5);
+  const [refereeRate, setRefereeRate] = useState(storeSettings.referralRefereeRate ?? 5);
+  const [saved, setSaved] = useState(false);
+
+  const save = async () => {
+    await onSave({
+      referralEnabled: enabled,
+      referralReferrerRate: Number(referrerRate) || 0,
+      referralRefereeRate: Number(refereeRate) || 0,
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  return (
+    <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-bold" style={{ color: C.ink }}>お友達紹介</div>
+        <button
+          onClick={() => setEnabled(!enabled)}
+          className="relative w-11 h-6 rounded-full transition-colors shrink-0"
+          style={{ background: enabled ? C.teal : C.line }}
+        >
+          <span
+            className="absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform"
+            style={{ transform: enabled ? "translateX(22px)" : "translateX(2px)" }}
+          />
+        </button>
+      </div>
+      <div className="text-[11px] mt-1" style={{ color: C.mute }}>
+        紹介されたお客様が初めてチャージした時に、お二人へポイントを付与します(初回のみ)
+      </div>
+
+      {enabled && (
+        <>
+          <div className="mt-3">
+            <div className="text-[12px] font-semibold" style={{ color: C.ink }}>紹介した人への還元率</div>
+            <div className="mt-1 flex items-center rounded-lg" style={{ background: C.cream }}>
+              <input
+                type="number"
+                value={referrerRate}
+                onChange={(e) => setReferrerRate(e.target.value)}
+                className="w-full bg-transparent px-3 py-2 text-sm font-semibold outline-none"
+                style={{ color: C.ink }}
+              />
+              <span className="pr-3 text-xs font-semibold" style={{ color: C.mute }}>% (初回チャージ額に対して)</span>
+            </div>
+          </div>
+
+          <div className="mt-3">
+            <div className="text-[12px] font-semibold" style={{ color: C.ink }}>紹介された人への還元率</div>
+            <div className="mt-1 flex items-center rounded-lg" style={{ background: C.cream }}>
+              <input
+                type="number"
+                value={refereeRate}
+                onChange={(e) => setRefereeRate(e.target.value)}
+                className="w-full bg-transparent px-3 py-2 text-sm font-semibold outline-none"
+                style={{ color: C.ink }}
+              />
+              <span className="pr-3 text-xs font-semibold" style={{ color: C.mute }}>% (初回チャージ額に対して)</span>
+            </div>
+          </div>
+
+          <div className="text-[10px] mt-2" style={{ color: C.mute }}>
+            ※オンにすると、お客様の画面に紹介IDが表示されます
+          </div>
+        </>
+      )}
+
+      <button
+        onClick={save}
+        className="mt-4 w-full rounded-full py-2.5 text-sm font-bold"
+        style={{ background: C.teal, color: "#fff" }}
+      >
+        {saved ? "✓ 保存しました" : "保存"}
+      </button>
+    </div>
+  );
+}
+
+// ---------------- SIGN OUT (設定画面の最下部) ----------------
+function SignOutSection({ onSignOut }) {
+  const [confirming, setConfirming] = useState(false);
+
+  if (!onSignOut) return null;
+
+  return (
+    <div className="mt-6 mb-2">
+      {confirming ? (
+        <div className="rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+          <div className="text-sm font-bold text-center" style={{ color: C.ink }}>
+            ログアウトしますか?
+          </div>
+          <div className="text-[11px] mt-1 text-center" style={{ color: C.mute }}>
+            再度ご利用いただくには、メールアドレスとパスワードでのログインが必要です
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button
+              onClick={() => setConfirming(false)}
+              className="rounded-full py-2.5 text-sm font-bold"
+              style={{ background: C.cream, color: C.ink }}
+            >
+              キャンセル
+            </button>
+            <button
+              onClick={onSignOut}
+              className="rounded-full py-2.5 text-sm font-bold"
+              style={{ background: C.coral, color: "#fff" }}
+            >
+              ログアウト
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          onClick={() => setConfirming(true)}
+          className="w-full rounded-full py-2.5 text-sm font-bold"
+          style={{ background: C.paper, border: `1px solid ${C.line}`, color: C.mute }}
+        >
+          ログアウト
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ---------------- POINT SETTINGS (purchase-based) ----------------
 function PointSettings({ storeSettings, onSave }) {
   const [enabled, setEnabled] = useState(storeSettings.purchasePointEnabled ?? true);
@@ -2324,7 +2453,7 @@ function StoreBrandingSettings({ storeSettings, onSave }) {
   );
 }
 
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, storeSettings = {}, onSaveStoreSettings, onSendPush }) {
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, storeSettings = {}, onSaveStoreSettings, onSendPush, onSignOut }) {
   const [tab, setTab] = useState("dashboard");
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
@@ -2541,6 +2670,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
           <SystemSafetySettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <WeatherCampaignSettings weatherEnabled={weatherEnabled} setWeatherEnabled={setWeatherEnabled} storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <StoreBrandingSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+          <SignOutSection onSignOut={onSignOut} />
         </>
       )}
 
