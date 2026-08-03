@@ -1523,11 +1523,32 @@ function StoreBrandingSettings({ storeSettings, onSave }) {
     setTimeout(() => setSaved(false), 2000);
   };
 
+  const appIconSource =
+    brandMode === "iconName" && iconImage ? iconImage : brandMode === "logo" && logoImage ? logoImage : null;
+
   return (
     <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
       <div className="text-sm font-bold" style={{ color: C.ink }}>お店のアイコン・名前</div>
       <div className="text-[11px] mt-1" style={{ color: C.mute }}>
         ヘッダーの表示(今のピコのアイコン〜「PicoPay」の文字がある幅)を、お店独自のロゴまたはアイコン+店舗名に差し替えられます
+      </div>
+
+      <div className="mt-3 flex items-center gap-3 rounded-lg p-3" style={{ background: C.cream }}>
+        <div
+          className="h-14 w-14 shrink-0 overflow-hidden flex items-center justify-center"
+          style={{ borderRadius: iconShape === "square" ? 12 : 9999, background: appIconSource ? "#fff" : "transparent", border: `1px solid ${C.line}` }}
+        >
+          {appIconSource ? (
+            <img src={appIconSource} alt="ホーム画面アイコンのプレビュー" className="h-full w-full object-contain" />
+          ) : (
+            <span className="text-lg">⚠️</span>
+          )}
+        </div>
+        <div className="text-[11px]" style={{ color: appIconSource ? C.mute : C.coral }}>
+          {appIconSource
+            ? "ホーム画面に追加した時のアイコンにも、これが使われます"
+            : "⚠️ 画面用アイコンが設定されておりません(ホーム画面に追加した時に使われるアイコンです)"}
+        </div>
       </div>
 
       <div className="mt-3 flex gap-2">
