@@ -587,6 +587,40 @@ export default function App() {
     return () => unsubscribe();
   }, [mode, myCustomerId, phoneVerified]);
 
+  // If this page was opened via the LIFF link (customer tapped "LINEアカウ
+  // ントと連携する"), it's running inside LINE's in-app browser — grab the
+  // LINE profile and save the userId against this customer's account.
+  useEffect(() => {
+    if (mode !== "customer" || !myCustomerId || !phoneVerified) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("linkLine") !== "1") return;
+    if (!storeSettings.lineLiffId) return;
+
+    let cancelled = false;
+    const link = async () => {
+      try {
+        if (!window.liff) return;
+        await window.liff.init({ liffId: storeSettings.lineLiffId });
+        if (!window.liff.isLoggedIn()) {
+          window.liff.login();
+          return;
+        }
+        const profile = await window.liff.getProfile();
+        if (cancelled) return;
+        await applyToOwnAccount(myCustomerId, (prev) => ({ ...prev, lineUserId: profile.userId }));
+        const url = new URL(window.location.href);
+        url.searchParams.delete("linkLine");
+        window.history.replaceState({}, "", url.toString());
+      } catch (e) {
+        // Customer can just try the "連携する" button again.
+      }
+    };
+    link();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, myCustomerId, phoneVerified, storeSettings.lineLiffId]);
+
   const handleUseBonusSpin = (rate) => {
     if (!myCustomerId) return;
     applyToAccount(myCustomerId, (prev) => {
