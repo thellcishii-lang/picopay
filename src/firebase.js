@@ -258,3 +258,16 @@ export async function getStoreSettings() {
 export async function saveStoreSettings(settings) {
   await update(ref(db, "storeSettings"), settings);
 }
+
+// ---- Store-level SECRETS (LINE API keys, etc.) — separate from
+// storeSettings because storeSettings is publicly readable (customers need
+// it for branding/hero images). Only email-authenticated store staff can
+// read or write this node — see firebase-rules.json.
+export async function getStoreSecrets() {
+  const snapshot = await get(ref(db, "storeSecrets"));
+  return snapshot.val() || {};
+}
+
+export async function saveStoreSecrets(secrets) {
+  await update(ref(db, "storeSecrets"), secrets);
+}
