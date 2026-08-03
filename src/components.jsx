@@ -1707,7 +1707,7 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
 // the layout and flows can be reviewed before the backend is built.
 const MAX_BROADCAST_GROUPS = 10;
 
-function ChannelBroadcastSection({ channelKey, channelLabel, customers, storeSettings, onSave }) {
+function ChannelBroadcastSection({ channelKey, channelLabel, customers, storeSettings, onSave, onSend }) {
   const [body, setBody] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [showGroupSend, setShowGroupSend] = useState(false);
@@ -1730,26 +1730,49 @@ function ChannelBroadcastSection({ channelKey, channelLabel, customers, storeSet
     .filter((c) => c.notifyOptIn?.[channelKey])
     .sort((a, b) => (a.name || "").localeCompare(b.name || "", "ja"));
 
+  const [sendError, setSendError] = useState(null);
+  const [sending, setSending] = useState(false);
+
   const logHistory = async (target, count) => {
     const entry = { date: new Date().toLocaleDateString("ja-JP"), body, target, count };
     await onSave({ [historyKey]: [entry, ...history].slice(0, 10) });
   };
 
+  const tokensFor = (pool) => pool.flatMap((c) => c.pushTokens || []);
+
   const sendToAll = async () => {
-    await logHistory("全員", optedIn.length);
-    setBody("");
+    setSendError(null);
+    setSending(true);
+    try {
+      if (onSend) await onSend(tokensFor(optedIn), body);
+      await logHistory("全員", optedIn.length);
+      setBody("");
+    } catch (e) {
+      setSendError(e?.message || "送信に失敗しました");
+    } finally {
+      setSending(false);
+    }
   };
 
   const sendToGroups = async () => {
     const pool = customers.filter((c) =>
       selectedGroupIds.some((gid) => groups.find((g) => g.id === gid)?.customerIds.includes(c.id))
     );
-    const count = pool.filter((c) => c.notifyOptIn?.[channelKey]).length;
+    const targeted = pool.filter((c) => c.notifyOptIn?.[channelKey]);
     const label = groups.filter((g) => selectedGroupIds.includes(g.id)).map((g) => g.name).join("・");
-    await logHistory(label, count);
-    setBody("");
-    setSelectedGroupIds([]);
-    setShowGroupSend(false);
+    setSendError(null);
+    setSending(true);
+    try {
+      if (onSend) await onSend(tokensFor(targeted), body);
+      await logHistory(label, targeted.length);
+      setBody("");
+      setSelectedGroupIds([]);
+      setShowGroupSend(false);
+    } catch (e) {
+      setSendError(e?.message || "送信に失敗しました");
+    } finally {
+      setSending(false);
+    }
   };
 
   const createGroup = async () => {
@@ -1805,20 +1828,25 @@ function ChannelBroadcastSection({ channelKey, channelLabel, customers, storeSet
       <div className="mt-2 grid grid-cols-2 gap-2">
         <button
           onClick={sendToAll}
-          disabled={!body.trim()}
+          disabled={!body.trim() || sending}
           className="rounded-full py-2.5 text-sm font-bold"
-          style={{ background: body.trim() ? C.teal : C.line, color: body.trim() ? "#fff" : C.mute }}
+          style={{ background: body.trim() ? C.teal : C.line, color: body.trim() ? "#fff" : C.mute, opacity: sending ? 0.6 : 1 }}
         >
-          一斉配信
+          {sending ? "送信中…" : "一斉配信"}
         </button>
         <button
           onClick={() => setShowGroupSend((v) => !v)}
+          disabled={sending}
           className="rounded-full py-2.5 text-sm font-bold"
           style={{ background: C.cream, color: C.ink }}
         >
           グループ配信
         </button>
       </div>
+
+      {sendError && (
+        <div className="mt-2 text-[11px] font-semibold" style={{ color: C.coral }}>{sendError}</div>
+      )}
 
       {showGroupSend && (
         <div className="mt-2 rounded-xl p-3" style={{ background: C.cream }}>
@@ -1840,14 +1868,15 @@ function ChannelBroadcastSection({ channelKey, channelLabel, customers, storeSet
           {groups.length > 0 && (
             <button
               onClick={sendToGroups}
-              disabled={selectedGroupIds.length === 0 || !body.trim()}
+              disabled={selectedGroupIds.length === 0 || !body.trim() || sending}
               className="mt-2 w-full rounded-full py-2 text-sm font-bold"
               style={{
                 background: selectedGroupIds.length > 0 && body.trim() ? C.teal : C.line,
                 color: selectedGroupIds.length > 0 && body.trim() ? "#fff" : C.mute,
+                opacity: sending ? 0.6 : 1,
               }}
             >
-              配信する
+              {sending ? "送信中…" : "配信する"}
             </button>
           )}
         </div>
@@ -2061,7 +2090,7 @@ function ChannelBroadcastSection({ channelKey, channelLabel, customers, storeSet
   );
 }
 
-function BroadcastPanel({ customers, storeSettings, onSave }) {
+function BroadcastPanel({ customers, storeSettings, onSave, onSendPush }) {
   const [showLineSetup, setShowLineSetup] = useState(false);
   const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [keyError, setKeyError] = useState(null);
@@ -2089,6 +2118,7 @@ function BroadcastPanel({ customers, storeSettings, onSave }) {
         customers={customers}
         storeSettings={storeSettings}
         onSave={onSave}
+        onSend={onSendPush}
       />
 
       <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
@@ -2574,7 +2604,7 @@ function StoreBrandingSettings({ storeSettings, onSave }) {
   );
 }
 
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, lineUrl, storeSettings = {}, onSaveStoreSettings }) {
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, lineUrl, storeSettings = {}, onSaveStoreSettings, onSendPush }) {
   const [tab, setTab] = useState("dashboard");
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
@@ -2883,6 +2913,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
           customers={customers}
           storeSettings={storeSettings}
           onSave={onSaveStoreSettings}
+          onSendPush={onSendPush}
         />
       )}
 
