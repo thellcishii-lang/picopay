@@ -54,6 +54,23 @@ export async function requestPushToken() {
   }
 }
 
+// Calls the Netlify Function that actually dispatches the push (the real
+// Firebase Admin credentials only ever live on that server-side function,
+// never in this client code). Returns { successCount, failureCount } or
+// throws if the request itself failed.
+export async function sendPushNotification({ tokens, title, body, icon }) {
+  const res = await fetch("/.netlify/functions/send-push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tokens, title, body, icon }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || "送信リクエストに失敗しました");
+  }
+  return res.json();
+}
+
 // ---- Auth: store side (email/password) ----
 export function subscribeToAuth(callback) {
   return onAuthStateChanged(auth, callback);
@@ -223,6 +240,7 @@ export async function listCustomers() {
     email: acc.profile?.email || null,
     balance: (acc.pointBalance || 0) + (acc.depositBalance || 0),
     notifyOptIn: acc.notifyOptIn || null,
+    pushTokens: acc.pushTokens || [],
   }));
 }
 
