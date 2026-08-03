@@ -532,8 +532,16 @@ function PointSettings({ storeSettings, onSave }) {
 }
 
 // ---------------- SYSTEM SAFETY SETTINGS (daily cap, unrelated to bonus tables) ----------------
-function SystemSafetySettings() {
-  const [dailyCap, setDailyCap] = useState(100000);
+function SystemSafetySettings({ storeSettings, onSave }) {
+  const [dailyCap, setDailyCap] = useState(storeSettings.dailyChargeCap ?? 100000);
+  const [saved, setSaved] = useState(false);
+
+  const save = async () => {
+    await onSave({ dailyChargeCap: Number(dailyCap) });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
   return (
     <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
       <div className="flex items-center gap-2">
@@ -560,22 +568,36 @@ function SystemSafetySettings() {
         </div>
       </div>
       <button
+        onClick={save}
         className="mt-3 w-full rounded-full py-2 text-sm font-bold"
         style={{ background: C.teal, color: "#fff" }}
       >
-        保存
+        {saved ? "✓ 保存しました" : "保存"}
       </button>
     </div>
   );
 }
 
 // ---------------- WEATHER-LINKED GUERRILLA CAMPAIGN SETTINGS ----------------
-function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled }) {
-  const [area, setArea] = useState("埼玉県飯能市");
-  const [rainThreshold, setRainThreshold] = useState(60);
-  const [autoMode, setAutoMode] = useState("confirm"); // "confirm" | "auto"
-  const [rate, setRate] = useState(20);
-  const [cap, setCap] = useState(50000);
+function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled, storeSettings, onSave }) {
+  const [area, setArea] = useState(storeSettings.weatherArea || "埼玉県飯能市");
+  const [rainThreshold, setRainThreshold] = useState(storeSettings.weatherRainThreshold ?? 60);
+  const [autoMode, setAutoMode] = useState(storeSettings.weatherAutoMode || "confirm"); // "confirm" | "auto"
+  const [rate, setRate] = useState(storeSettings.weatherRate ?? 20);
+  const [cap, setCap] = useState(storeSettings.weatherCap ?? 50000);
+  const [saved, setSaved] = useState(false);
+
+  const save = async () => {
+    await onSave({
+      weatherArea: area,
+      weatherRainThreshold: Number(rainThreshold),
+      weatherAutoMode: autoMode,
+      weatherRate: Number(rate),
+      weatherCap: Number(cap),
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
 
   return (
     <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
@@ -687,10 +709,11 @@ function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled }) {
           </div>
 
           <button
+            onClick={save}
             className="mt-4 w-full rounded-full py-2.5 text-sm font-bold"
             style={{ background: C.teal, color: "#fff" }}
           >
-            保存
+            {saved ? "✓ 保存しました" : "保存"}
           </button>
         </>
       )}
@@ -698,22 +721,36 @@ function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled }) {
   );
 }
 // ---------------- RANK SETTINGS (Silver/Gold/Platinum) ----------------
-function RankSettings({ rankingEnabled, setRankingEnabled }) {
-  const [showTable, setShowTable] = useState(false);
-  const [decideMode, setDecideMode] = useState("manual"); // "manual" | "total" | "period"
-  const [useVisitCount, setUseVisitCount] = useState(false);
-  const [evalMethod, setEvalMethod] = useState("combined"); // "combined" | "amountOnly" | "visitOnly"
-  const [ranks, setRanks] = useState([
-    { name: "シルバー", rate: 3, threshold: 0, visitThreshold: 0 },
-    { name: "ゴールド", rate: 5, threshold: 50000, visitThreshold: 2 },
-    { name: "プラチナ", rate: 8, threshold: 200000, visitThreshold: 4 },
-  ]);
+function RankSettings({ rankingEnabled, setRankingEnabled, storeSettings, onSave }) {
+  const [showTable, setShowTable] = useState(!!storeSettings.rankTiers);
+  const [decideMode, setDecideMode] = useState(storeSettings.rankDecideMode || "manual"); // "manual" | "total" | "period"
+  const [useVisitCount, setUseVisitCount] = useState(storeSettings.rankUseVisitCount || false);
+  const [evalMethod, setEvalMethod] = useState(storeSettings.rankEvalMethod || "combined"); // "combined" | "amountOnly" | "visitOnly"
+  const [ranks, setRanks] = useState(
+    storeSettings.rankTiers || [
+      { name: "シルバー", rate: 3, threshold: 0, visitThreshold: 0 },
+      { name: "ゴールド", rate: 5, threshold: 50000, visitThreshold: 2 },
+      { name: "プラチナ", rate: 8, threshold: 200000, visitThreshold: 4 },
+    ]
+  );
+  const [saved, setSaved] = useState(false);
 
   const updateRank = (i, key, value) => {
     setRanks((rs) => rs.map((r, idx) => (idx === i ? { ...r, [key]: value } : r)));
   };
 
   const autoOn = decideMode !== "manual";
+
+  const save = async () => {
+    await onSave({
+      rankTiers: ranks,
+      rankDecideMode: decideMode,
+      rankUseVisitCount: useVisitCount,
+      rankEvalMethod: evalMethod,
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
 
   return (
     <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
@@ -874,10 +911,11 @@ function RankSettings({ rankingEnabled, setRankingEnabled }) {
           )}
 
           <button
+            onClick={save}
             className="mt-4 w-full rounded-full py-2.5 text-sm font-bold"
             style={{ background: C.teal, color: "#fff" }}
           >
-            会員ランク設定を保存
+            {saved ? "✓ 保存しました" : "会員ランク設定を保存"}
           </button>
         </>
       )}
@@ -2100,6 +2138,12 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
   const [customerSearch, setCustomerSearch] = useState("");
   const [showLineQrModal, setShowLineQrModal] = useState(false);
 
+  // Switching tabs (概況/決済/配信/設定) should always start at the top —
+  // otherwise the page keeps whatever scroll position it had before.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [tab]);
+
   return (
     <div className="max-w-md mx-auto px-4 pb-24">
       {tab === "dashboard" && (
@@ -2377,12 +2421,12 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
       {tab === "settings" && (
         <>
           <PointSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
-          <RankSettings rankingEnabled={rankingEnabled} setRankingEnabled={setRankingEnabled} />
+          <RankSettings rankingEnabled={rankingEnabled} setRankingEnabled={setRankingEnabled} storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <ReferralSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <DepositBonusSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <GachaSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
-          <SystemSafetySettings />
-          <WeatherCampaignSettings weatherEnabled={weatherEnabled} setWeatherEnabled={setWeatherEnabled} />
+          <SystemSafetySettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+          <WeatherCampaignSettings weatherEnabled={weatherEnabled} setWeatherEnabled={setWeatherEnabled} storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <StoreBrandingSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <LineSettings lineUrl={lineUrl} onSave={onSaveStoreSettings} />
         </>
@@ -2444,11 +2488,16 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
 
   const usableTotal = pointBalance + depositBalance;
 
+  // Use the store's saved rank tiers if they've configured any; otherwise
+  // fall back to the built-in default silver/gold/platinum tiers.
+  const effectiveRanks =
+    storeSettings.rankTiers && storeSettings.rankTiers.length > 0 ? storeSettings.rankTiers : RANKS;
+
   // Mock: this customer's cumulative purchase total used to compute rank progress
   const cumulativeSpend = 68000;
-  const currentRankIdx = [...RANKS].reverse().findIndex((r) => cumulativeSpend >= r.threshold);
-  const currentRank = RANKS[RANKS.length - 1 - currentRankIdx];
-  const nextRank = RANKS[RANKS.indexOf(currentRank) + 1];
+  const currentRankIdx = [...effectiveRanks].reverse().findIndex((r) => cumulativeSpend >= r.threshold);
+  const currentRank = effectiveRanks[effectiveRanks.length - 1 - currentRankIdx];
+  const nextRank = effectiveRanks[effectiveRanks.indexOf(currentRank) + 1];
 
   return (
     <div className="max-w-md mx-auto px-4 pb-10">
@@ -2624,7 +2673,7 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
           <div className="px-3 py-2 text-[11px] font-bold" style={{ background: C.cream, color: C.ink }}>
             会員ランク特典
           </div>
-          {RANKS.map((r, i) => (
+          {effectiveRanks.map((r, i) => (
             <div
               key={r.name}
               className="flex items-center justify-between px-3 py-2"
