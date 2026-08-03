@@ -1699,7 +1699,451 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
   );
 }
 
-// ---------------- LINE SETTINGS ----------------
+// ---------------- BROADCAST (配信) — shared UI for one channel ----------------
+// This is the UI skeleton only — sending a real push notification or LINE
+// message requires a server-side function (to call Firebase Cloud
+// Messaging / the LINE Messaging API), which isn't wired up yet. For now,
+// "send" just resolves the recipient list and records a history entry so
+// the layout and flows can be reviewed before the backend is built.
+const MAX_BROADCAST_GROUPS = 10;
+
+function ChannelBroadcastSection({ channelKey, channelLabel, customers, storeSettings, onSave }) {
+  const [body, setBody] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
+  const [showGroupSend, setShowGroupSend] = useState(false);
+  const [showGroupCreate, setShowGroupCreate] = useState(false);
+  const [showGroupList, setShowGroupList] = useState(false);
+  const [selectedGroupIds, setSelectedGroupIds] = useState([]);
+  const [groupNameDraft, setGroupNameDraft] = useState("");
+  const [pickedCustomerIds, setPickedCustomerIds] = useState([]);
+  const [openGroupId, setOpenGroupId] = useState(null); // which group's 追加/削除 is open in the group list
+  const [groupAction, setGroupAction] = useState(null); // "add" | "remove"
+  const [addPickIds, setAddPickIds] = useState([]);
+  const [removePickIds, setRemovePickIds] = useState([]);
+
+  const historyKey = `${channelKey}BroadcastHistory`;
+  const groupsKey = `${channelKey}Groups`;
+  const history = storeSettings[historyKey] || [];
+  const groups = storeSettings[groupsKey] || [];
+
+  const optedIn = customers
+    .filter((c) => c.notifyOptIn?.[channelKey])
+    .sort((a, b) => (a.name || "").localeCompare(b.name || "", "ja"));
+
+  const logHistory = async (target, count) => {
+    const entry = { date: new Date().toLocaleDateString("ja-JP"), body, target, count };
+    await onSave({ [historyKey]: [entry, ...history].slice(0, 10) });
+  };
+
+  const sendToAll = async () => {
+    await logHistory("全員", optedIn.length);
+    setBody("");
+  };
+
+  const sendToGroups = async () => {
+    const pool = customers.filter((c) =>
+      selectedGroupIds.some((gid) => groups.find((g) => g.id === gid)?.customerIds.includes(c.id))
+    );
+    const count = pool.filter((c) => c.notifyOptIn?.[channelKey]).length;
+    const label = groups.filter((g) => selectedGroupIds.includes(g.id)).map((g) => g.name).join("・");
+    await logHistory(label, count);
+    setBody("");
+    setSelectedGroupIds([]);
+    setShowGroupSend(false);
+  };
+
+  const createGroup = async () => {
+    if (!groupNameDraft.trim() || pickedCustomerIds.length === 0) return;
+    const newGroup = { id: `${channelKey}-grp-${Date.now()}`, name: groupNameDraft.trim(), customerIds: pickedCustomerIds };
+    await onSave({ [groupsKey]: [...groups, newGroup] });
+    setGroupNameDraft("");
+    setPickedCustomerIds([]);
+    setShowGroupCreate(false);
+  };
+
+  const deleteGroup = async (id) => {
+    await onSave({ [groupsKey]: groups.filter((g) => g.id !== id) });
+    setOpenGroupId(null);
+  };
+
+  const addMembers = async (id) => {
+    if (addPickIds.length === 0) return;
+    const next = groups.map((g) =>
+      g.id === id ? { ...g, customerIds: [...g.customerIds, ...addPickIds] } : g
+    );
+    await onSave({ [groupsKey]: next });
+    setAddPickIds([]);
+    setGroupAction(null);
+  };
+
+  const removeMembers = async (id) => {
+    if (removePickIds.length === 0) return;
+    const next = groups.map((g) =>
+      g.id === id ? { ...g, customerIds: g.customerIds.filter((cid) => !removePickIds.includes(cid)) } : g
+    );
+    await onSave({ [groupsKey]: next });
+    setRemovePickIds([]);
+    setGroupAction(null);
+  };
+
+  return (
+    <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+      <div className="text-sm font-bold" style={{ color: C.ink }}>{channelLabel}</div>
+      <div className="text-[11px] mt-1" style={{ color: C.mute }}>
+        通知の受け取りを許可しているお客様(現在{optedIn.length}名)にのみ届きます
+      </div>
+
+      <textarea
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        placeholder="配信内容を入力してください"
+        rows={4}
+        className="mt-3 w-full rounded-lg px-3 py-2 text-sm outline-none resize-none"
+        style={{ background: C.cream, color: C.ink }}
+      />
+
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <button
+          onClick={sendToAll}
+          disabled={!body.trim()}
+          className="rounded-full py-2.5 text-sm font-bold"
+          style={{ background: body.trim() ? C.teal : C.line, color: body.trim() ? "#fff" : C.mute }}
+        >
+          一斉配信
+        </button>
+        <button
+          onClick={() => setShowGroupSend((v) => !v)}
+          className="rounded-full py-2.5 text-sm font-bold"
+          style={{ background: C.cream, color: C.ink }}
+        >
+          グループ配信
+        </button>
+      </div>
+
+      {showGroupSend && (
+        <div className="mt-2 rounded-xl p-3" style={{ background: C.cream }}>
+          {groups.length === 0 && (
+            <div className="text-[11px] text-center py-2" style={{ color: C.mute }}>配信グループがまだありません</div>
+          )}
+          {groups.map((g) => (
+            <label key={g.id} className="flex items-center justify-between py-1.5 text-[13px]" style={{ color: C.ink }}>
+              <span>{g.name}({g.customerIds.length}名)</span>
+              <input
+                type="checkbox"
+                checked={selectedGroupIds.includes(g.id)}
+                onChange={() =>
+                  setSelectedGroupIds((ids) => (ids.includes(g.id) ? ids.filter((x) => x !== g.id) : [...ids, g.id]))
+                }
+              />
+            </label>
+          ))}
+          {groups.length > 0 && (
+            <button
+              onClick={sendToGroups}
+              disabled={selectedGroupIds.length === 0 || !body.trim()}
+              className="mt-2 w-full rounded-full py-2 text-sm font-bold"
+              style={{
+                background: selectedGroupIds.length > 0 && body.trim() ? C.teal : C.line,
+                color: selectedGroupIds.length > 0 && body.trim() ? "#fff" : C.mute,
+              }}
+            >
+              配信する
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <button
+          onClick={() => { setShowGroupCreate((v) => !v); setShowGroupList(false); }}
+          disabled={groups.length >= MAX_BROADCAST_GROUPS}
+          className="rounded-full py-2 text-xs font-semibold"
+          style={{ background: C.cream, color: groups.length >= MAX_BROADCAST_GROUPS ? C.mute : C.ink }}
+        >
+          {groups.length >= MAX_BROADCAST_GROUPS ? "グループは最大10個まで" : "グループ作成"}
+        </button>
+        <button
+          onClick={() => { setShowGroupList((v) => !v); setShowGroupCreate(false); }}
+          className="rounded-full py-2 text-xs font-semibold"
+          style={{ background: C.cream, color: C.ink }}
+        >
+          グループ一覧
+        </button>
+      </div>
+
+      {showGroupCreate && (
+        <div className="mt-2 rounded-xl p-3" style={{ background: C.cream }}>
+          <input
+            value={groupNameDraft}
+            onChange={(e) => setGroupNameDraft(e.target.value)}
+            placeholder="グループ名"
+            className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+            style={{ background: "#fff", color: C.ink }}
+          />
+          <div className="text-[10px] mt-2" style={{ color: C.mute }}>
+            {channelLabel}を許可しているお客様(あいうえお順)
+          </div>
+          <div className="mt-1 max-h-52 overflow-y-auto rounded-lg" style={{ background: "#fff" }}>
+            {optedIn.length === 0 && (
+              <div className="text-[11px] text-center py-3" style={{ color: C.mute }}>対象のお客様がいません</div>
+            )}
+            {optedIn.map((c) => (
+              <label key={c.id} className="flex items-center justify-between px-3 py-2 text-[13px]" style={{ color: C.ink, borderBottom: `1px solid ${C.line}` }}>
+                <span>{c.name}</span>
+                <input
+                  type="checkbox"
+                  checked={pickedCustomerIds.includes(c.id)}
+                  onChange={() =>
+                    setPickedCustomerIds((ids) =>
+                      ids.includes(c.id) ? ids.filter((x) => x !== c.id) : [...ids, c.id]
+                    )
+                  }
+                />
+              </label>
+            ))}
+          </div>
+          <button
+            onClick={createGroup}
+            disabled={!groupNameDraft.trim() || pickedCustomerIds.length === 0}
+            className="mt-2 w-full rounded-full py-2 text-sm font-bold"
+            style={{
+              background: groupNameDraft.trim() && pickedCustomerIds.length > 0 ? C.teal : C.line,
+              color: groupNameDraft.trim() && pickedCustomerIds.length > 0 ? "#fff" : C.mute,
+            }}
+          >
+            グループ作成
+          </button>
+        </div>
+      )}
+
+      {showGroupList && (
+        <div className="mt-2 rounded-xl overflow-hidden" style={{ border: `1px solid ${C.line}` }}>
+          {groups.length === 0 && (
+            <div className="px-3 py-3 text-center text-[12px]" style={{ background: C.cream, color: C.mute }}>
+              まだ配信グループがありません
+            </div>
+          )}
+          {groups.map((g, i) => {
+            const memberSet = new Set(g.customerIds);
+            const nonMembers = optedIn.filter((c) => !memberSet.has(c.id));
+            const members = optedIn.filter((c) => memberSet.has(c.id));
+            return (
+              <div key={g.id} style={{ borderTop: i === 0 ? "none" : `1px solid ${C.line}` }}>
+                <button
+                  onClick={() => {
+                    setOpenGroupId(openGroupId === g.id ? null : g.id);
+                    setGroupAction(null);
+                    setAddPickIds([]);
+                    setRemovePickIds([]);
+                  }}
+                  className="w-full flex items-center justify-between px-3 py-2"
+                  style={{ background: C.paper }}
+                >
+                  <span className="text-sm font-semibold" style={{ color: C.ink }}>{g.name}({g.customerIds.length}名)</span>
+                  <ChevronRight size={14} style={{ color: C.mute, transform: openGroupId === g.id ? "rotate(90deg)" : "none" }} />
+                </button>
+                {openGroupId === g.id && (
+                  <div className="px-3 pb-3" style={{ background: C.cream }}>
+                    <div className="grid grid-cols-3 gap-2 pt-2">
+                      <button
+                        onClick={() => setGroupAction(groupAction === "add" ? null : "add")}
+                        className="rounded-full py-1.5 text-[11px] font-semibold"
+                        style={{ background: groupAction === "add" ? C.teal : "#fff", color: groupAction === "add" ? "#fff" : C.ink }}
+                      >
+                        追加
+                      </button>
+                      <button
+                        onClick={() => setGroupAction(groupAction === "remove" ? null : "remove")}
+                        className="rounded-full py-1.5 text-[11px] font-semibold"
+                        style={{ background: groupAction === "remove" ? C.coral : "#fff", color: groupAction === "remove" ? "#fff" : C.ink }}
+                      >
+                        削除
+                      </button>
+                      <button
+                        onClick={() => deleteGroup(g.id)}
+                        className="rounded-full py-1.5 text-[11px] font-semibold"
+                        style={{ background: "#fff", color: C.coral }}
+                      >
+                        グループ削除
+                      </button>
+                    </div>
+
+                    {groupAction === "add" && (
+                      <div className="mt-2">
+                        <div className="max-h-44 overflow-y-auto rounded-lg" style={{ background: "#fff" }}>
+                          {nonMembers.length === 0 && (
+                            <div className="text-[11px] text-center py-3" style={{ color: C.mute }}>追加できるお客様がいません</div>
+                          )}
+                          {nonMembers.map((c) => (
+                            <label key={c.id} className="flex items-center justify-between px-3 py-2 text-[13px]" style={{ color: C.ink, borderBottom: `1px solid ${C.line}` }}>
+                              <span>{c.name}</span>
+                              <input
+                                type="checkbox"
+                                checked={addPickIds.includes(c.id)}
+                                onChange={() =>
+                                  setAddPickIds((ids) => (ids.includes(c.id) ? ids.filter((x) => x !== c.id) : [...ids, c.id]))
+                                }
+                              />
+                            </label>
+                          ))}
+                        </div>
+                        <button
+                          onClick={() => addMembers(g.id)}
+                          disabled={addPickIds.length === 0}
+                          className="mt-2 w-full rounded-full py-2 text-xs font-bold"
+                          style={{ background: addPickIds.length > 0 ? C.teal : C.line, color: addPickIds.length > 0 ? "#fff" : C.mute }}
+                        >
+                          追加する
+                        </button>
+                      </div>
+                    )}
+
+                    {groupAction === "remove" && (
+                      <div className="mt-2">
+                        <div className="max-h-44 overflow-y-auto rounded-lg" style={{ background: "#fff" }}>
+                          {members.length === 0 && (
+                            <div className="text-[11px] text-center py-3" style={{ color: C.mute }}>メンバーがいません</div>
+                          )}
+                          {members.map((c) => (
+                            <label key={c.id} className="flex items-center justify-between px-3 py-2 text-[13px]" style={{ color: C.ink, borderBottom: `1px solid ${C.line}` }}>
+                              <span>{c.name}</span>
+                              <input
+                                type="checkbox"
+                                checked={removePickIds.includes(c.id)}
+                                onChange={() =>
+                                  setRemovePickIds((ids) => (ids.includes(c.id) ? ids.filter((x) => x !== c.id) : [...ids, c.id]))
+                                }
+                              />
+                            </label>
+                          ))}
+                        </div>
+                        <button
+                          onClick={() => removeMembers(g.id)}
+                          disabled={removePickIds.length === 0}
+                          className="mt-2 w-full rounded-full py-2 text-xs font-bold"
+                          style={{ background: removePickIds.length > 0 ? C.coral : C.line, color: removePickIds.length > 0 ? "#fff" : C.mute }}
+                        >
+                          削除する
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <button
+        onClick={() => setShowHistory((v) => !v)}
+        className="mt-2 w-full rounded-full py-2 text-xs font-semibold"
+        style={{ background: C.cream, color: C.ink }}
+      >
+        配信履歴
+      </button>
+      {showHistory && (
+        <div className="mt-2 rounded-xl overflow-hidden" style={{ border: `1px solid ${C.line}` }}>
+          {history.length === 0 && (
+            <div className="px-3 py-3 text-center text-[12px]" style={{ background: C.cream, color: C.mute }}>
+              まだ配信履歴がありません
+            </div>
+          )}
+          {history.map((h, i) => (
+            <div key={i} className="px-3 py-2" style={{ background: C.paper, borderTop: i === 0 ? "none" : `1px solid ${C.line}` }}>
+              <div className="text-[10px]" style={{ color: C.mute }}>{h.date}・{h.target}({h.count}名)</div>
+              <div className="text-[11px]" style={{ color: C.ink }}>{h.body}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BroadcastPanel({ customers, storeSettings, onSave }) {
+  const [showLineSetup, setShowLineSetup] = useState(false);
+  const [apiKeyDraft, setApiKeyDraft] = useState("");
+  const [keyError, setKeyError] = useState(null);
+
+  const lineApiKey = storeSettings.lineApiKey || "";
+
+  const submitApiKey = async () => {
+    setKeyError(null);
+    // UI-only validation for now — a real check would call the LINE API via
+    // a server function to confirm the token actually works.
+    if (apiKeyDraft.trim().length < 20) {
+      setKeyError("APIキーの形式が正しくないようです。LINE Developersからコピーした値を確認してください");
+      return;
+    }
+    await onSave({ lineApiKey: apiKeyDraft.trim() });
+    setApiKeyDraft("");
+    setShowLineSetup(false);
+  };
+
+  return (
+    <>
+      <ChannelBroadcastSection
+        channelKey="push"
+        channelLabel="プッシュ通知"
+        customers={customers}
+        storeSettings={storeSettings}
+        onSave={onSave}
+      />
+
+      <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+        <div className="text-sm font-bold" style={{ color: C.ink }}>LINE配信</div>
+        <div className="text-[11px] mt-1" style={{ color: C.mute }}>
+          無料で月200件までは送信可能。それ以上はLINEのライトプラン以上へのご契約が個別に必要になります。
+        </div>
+
+        {!lineApiKey && !showLineSetup && (
+          <button
+            onClick={() => setShowLineSetup(true)}
+            className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
+            style={{ background: "#06C755", color: "#fff" }}
+          >
+            LINE配信を始める
+          </button>
+        )}
+
+        {!lineApiKey && showLineSetup && (
+          <div className="mt-3">
+            <input
+              value={apiKeyDraft}
+              onChange={(e) => setApiKeyDraft(e.target.value)}
+              placeholder="LINE Messaging APIのチャネルアクセストークン"
+              className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+              style={{ background: C.cream, color: C.ink }}
+            />
+            {keyError && (
+              <div className="mt-1 text-[11px] font-semibold" style={{ color: C.coral }}>{keyError}</div>
+            )}
+            <button
+              onClick={submitApiKey}
+              disabled={!apiKeyDraft.trim()}
+              className="mt-2 w-full rounded-full py-2.5 text-sm font-bold"
+              style={{ background: apiKeyDraft.trim() ? "#06C755" : C.line, color: apiKeyDraft.trim() ? "#fff" : C.mute }}
+            >
+              送信
+            </button>
+          </div>
+        )}
+      </div>
+
+      {lineApiKey && (
+        <ChannelBroadcastSection
+          channelKey="line"
+          channelLabel="LINE配信"
+          customers={customers}
+          storeSettings={storeSettings}
+          onSave={onSave}
+        />
+      )}
+    </>
+  );
+}
+
 function LineSettings({ lineUrl, onSave }) {
   const [value, setValue] = useState(lineUrl || "");
   const [saved, setSaved] = useState(false);
@@ -2434,6 +2878,14 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
 
       {tab === "pay" && <ChargeScreen onCharge={onCharge} onDeduct={onDeduct} />}
 
+      {tab === "notify" && (
+        <BroadcastPanel
+          customers={customers}
+          storeSettings={storeSettings}
+          onSave={onSaveStoreSettings}
+        />
+      )}
+
       {/* Bottom nav */}
       <div
         className="fixed bottom-0 left-0 right-0"
@@ -2458,7 +2910,22 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
 }
 
 // ---------------- CUSTOMER VIEW ----------------
-function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusSpin, history, rankingEnabled, customerId, storeSettings = {} }) {
+function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusSpin, history, rankingEnabled, customerId, storeSettings = {}, notifyOptIn, onUpdateNotifyPrefs }) {
+  const [showNotifySettings, setShowNotifySettings] = useState(false);
+  const [notifyDraft, setNotifyDraft] = useState({
+    push: notifyOptIn?.push || false,
+    line: notifyOptIn?.line || false,
+  });
+  const [notifySaved, setNotifySaved] = useState(false);
+  const [showPushHistory, setShowPushHistory] = useState(false);
+  const pushHistory = notifyOptIn?.pushHistory || [];
+
+  const saveNotifyPrefs = async () => {
+    await onUpdateNotifyPrefs(notifyDraft);
+    setNotifySaved(true);
+    setTimeout(() => setNotifySaved(false), 2000);
+  };
+
   const [spinning, setSpinning] = useState(false);
   const [result, setResult] = useState(null);
   const [openDate, setOpenDate] = useState(null);
@@ -2706,6 +3173,76 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
           </div>
         </div>
       )}
+
+      {/* Notification preferences — collapsed by default */}
+      <div className="mt-5 rounded-2xl overflow-hidden" style={{ border: `1px solid ${C.line}` }}>
+        <button
+          onClick={() => setShowNotifySettings((v) => !v)}
+          className="w-full flex items-center justify-between px-4 py-3"
+          style={{ background: C.paper }}
+        >
+          <span className="text-sm font-bold" style={{ color: C.ink }}>通知設定</span>
+          <span className="text-[11px]" style={{ color: C.mute }}>{showNotifySettings ? "閉じる" : "設定する"}</span>
+        </button>
+        {showNotifySettings && (
+          <div className="px-4 py-3" style={{ background: C.cream }}>
+            <div className="text-[11px]" style={{ color: C.mute }}>
+              お店からのお知らせを受け取る方法を選んでください(何も選ばなければ届きません)
+            </div>
+
+            <label className="mt-2 flex items-center justify-between text-[13px]" style={{ color: C.ink }}>
+              <span>プッシュ通知を受け取る</span>
+              <input
+                type="checkbox"
+                checked={notifyDraft.push}
+                onChange={(e) => setNotifyDraft((d) => ({ ...d, push: e.target.checked }))}
+              />
+            </label>
+            <div className="text-[10px] mt-0.5" style={{ color: C.mute }}>
+              ホーム画面に追加しないとプッシュ通知は届きません
+            </div>
+            <button
+              onClick={() => setShowPushHistory((v) => !v)}
+              className="mt-1.5 text-[11px] font-semibold"
+              style={{ color: C.teal }}
+            >
+              {showPushHistory ? "プッシュ通知履歴を閉じる" : "プッシュ通知履歴"}
+            </button>
+            {showPushHistory && (
+              <div className="mt-1 rounded-lg overflow-hidden" style={{ border: `1px solid ${C.line}` }}>
+                {pushHistory.length === 0 && (
+                  <div className="px-3 py-3 text-center text-[11px]" style={{ background: C.paper, color: C.mute }}>
+                    まだ通知履歴がありません
+                  </div>
+                )}
+                {pushHistory.map((h, i) => (
+                  <div key={i} className="px-3 py-2 text-[11px]" style={{ background: C.paper, borderTop: i === 0 ? "none" : `1px solid ${C.line}`, color: C.ink }}>
+                    <div style={{ color: C.mute }} className="text-[10px]">{h.date}</div>
+                    {h.body}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <label className="mt-3 flex items-center justify-between text-[13px]" style={{ color: C.ink }}>
+              <span>LINE通知を受け取る</span>
+              <input
+                type="checkbox"
+                checked={notifyDraft.line}
+                onChange={(e) => setNotifyDraft((d) => ({ ...d, line: e.target.checked }))}
+              />
+            </label>
+
+            <button
+              onClick={saveNotifyPrefs}
+              className="mt-3 w-full rounded-full py-2 text-sm font-bold"
+              style={{ background: C.teal, color: "#fff" }}
+            >
+              {notifySaved ? "✓ 確定しました" : "確定"}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
