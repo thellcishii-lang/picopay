@@ -142,6 +142,24 @@ export async function deleteCustomerPermanently(customerId) {
   await remove(ref(db, `accounts/${customerId}`));
 }
 
+// Re-issue access for a customer who lost their phone or changed their
+// number. Requires the store to have confirmed a photo ID first. The photo
+// is stored under a separate `idPhotos/` path (not nested inside the
+// account) so that bulk-loading the customer list doesn't have to pull
+// every photo along with it. If the phone number changed, this also updates
+// the profile so future SMS verification checks against the new number.
+export async function reissueCustomerAccess({ customerId, newPhone, idPhotoDataUrl }) {
+  if (idPhotoDataUrl) {
+    await set(ref(db, `idPhotos/${customerId}`), {
+      dataUrl: idPhotoDataUrl,
+      verifiedAt: Date.now(),
+    });
+  }
+  if (newPhone) {
+    await update(ref(db, `accounts/${customerId}/profile`), { phone: newPhone });
+  }
+}
+
 // Create a brand-new customer account (used by store-side registration).
 // Generates a short, unique-enough ID and writes fresh default data plus
 // whatever profile fields were collected at registration. `phone` must be a
