@@ -1434,6 +1434,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
   const [rainSent, setRainSent] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [customerSearch, setCustomerSearch] = useState("");
+  const [showLineQrModal, setShowLineQrModal] = useState(false);
 
   return (
     <div className="max-w-md mx-auto px-4 pb-24">
@@ -1487,6 +1488,30 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
           </div>
         ))}
       </div>
+
+      {lineUrl && (
+        <button
+          onClick={() => setShowLineQrModal(true)}
+          className="mt-4 w-full rounded-2xl py-3 text-sm font-bold flex items-center justify-center gap-2"
+          style={{ background: "#06C755", color: "#fff" }}
+        >
+          お店のLINE QRコードを表示
+        </button>
+      )}
+
+      {showLineQrModal && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center px-6"
+          style={{ background: "#06C755" }}
+          onClick={() => setShowLineQrModal(false)}
+        >
+          <div className="text-white text-sm font-bold mb-4">友だち追加はこちらから</div>
+          <div className="rounded-2xl bg-white p-6">
+            <QRCodeSVG value={lineUrl} size={220} level="M" />
+          </div>
+          <div className="text-white text-[11px] mt-4">画面のどこかをタップで閉じます</div>
+        </div>
+      )}
 
       {/* Guerrilla campaign card — the "signature" element */}
       {weatherEnabled && (
