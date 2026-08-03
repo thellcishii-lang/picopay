@@ -335,6 +335,16 @@ export default function App() {
     return next;
   };
 
+  const computeDepositBonus = (amount) => {
+    if (!storeSettings.depositBonusEnabled) return 0;
+    if (storeSettings.depositBonusFlatMode) {
+      return Math.round(amount * ((storeSettings.depositBonusFlatRate || 0) / 100));
+    }
+    const tiers = storeSettings.depositBonusTiers || [];
+    const tier = tiers.find((t) => t.upTo === null || amount <= t.upTo) || tiers[tiers.length - 1];
+    return tier ? Math.round(amount * ((tier.rate || 0) / 100)) : 0;
+  };
+
   const handleCharge = async (amount, customerId) => {
     if (!customerId) return;
     const result = await applyToAccount(customerId, (prev) => {
@@ -345,6 +355,7 @@ export default function App() {
       const refereeBonus = giveReferralBonus
         ? Math.round(amount * ((storeSettings.referralRefereeRate || 0) / 100))
         : 0;
+      const depositBonus = computeDepositBonus(amount);
       const history = [
         {
           date: "今日",
@@ -354,6 +365,14 @@ export default function App() {
         },
         ...(prev.history || []),
       ];
+      if (depositBonus > 0) {
+        history.unshift({
+          date: "今日",
+          summary: "入金ボーナス",
+          total: depositBonus,
+          items: [{ label: "入金ボーナス", amount: depositBonus }],
+        });
+      }
       if (refereeBonus > 0) {
         history.unshift({
           date: "今日",
@@ -365,8 +384,8 @@ export default function App() {
       return {
         ...prev,
         depositBalance: (prev.depositBalance || 0) + amount,
-        pointBalance: (prev.pointBalance || 0) + refereeBonus,
-        bonusEligible: amount >= 10000 ? true : prev.bonusEligible,
+        pointBalance: (prev.pointBalance || 0) + refereeBonus + depositBonus,
+        bonusEligible: storeSettings.gachaEnabled !== false && amount >= 10000 ? true : prev.bonusEligible,
         referralBonusGiven: giveReferralBonus ? true : prev.referralBonusGiven,
         history,
       };
