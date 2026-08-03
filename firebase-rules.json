@@ -28,10 +28,6 @@
       ".read": true,
       ".write": "auth != null && auth.token.email != null"
     },
-    "storeSecrets": {
-      ".read": "auth != null && auth.token.email != null",
-      ".write": "auth != null && auth.token.email != null"
-    },
     "$other": {
       ".read": false,
       ".write": false
