@@ -211,7 +211,13 @@ export default function App() {
   // Store-side view settings — per-device for now.
   const [rankingEnabled, setRankingEnabled] = useState(true);
   const [weatherEnabled, setWeatherEnabled] = useState(true);
-  const [lineUrl, setLineUrl] = useState("");
+  // Shared branding/settings the store configures once — LINE URL, logo/icon,
+  // store name, and the customer-side hero image. Fetched on both sides
+  // (store needs it to edit, customer needs it to render their own header).
+  const [storeSettings, setStoreSettingsState] = useState({});
+  useEffect(() => {
+    getStoreSettings().then(setStoreSettingsState);
+  }, [mode]);
 
   // ---- Store-side: the full customer list ----
   const [customers, setCustomers] = useState([]);
@@ -220,15 +226,12 @@ export default function App() {
     setCustomers(list);
   }, []);
   useEffect(() => {
-    if (mode === "store" && authUser) {
-      refreshCustomers();
-      getStoreSettings().then((s) => setLineUrl(s.lineUrl || ""));
-    }
+    if (mode === "store" && authUser) refreshCustomers();
   }, [mode, authUser, refreshCustomers]);
 
-  const handleSaveLineUrl = async (url) => {
-    await saveStoreSettings({ lineUrl: url });
-    setLineUrl(url);
+  const handleSaveStoreSettings = async (updates) => {
+    await saveStoreSettings(updates);
+    setStoreSettingsState((prev) => ({ ...prev, ...updates }));
   };
 
   const handleRegisterCustomer = async ({ name, phone, email, requireVerification }) => {
@@ -410,7 +413,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen" style={{ background: C.cream, fontFamily: "'Hiragino Sans', system-ui, sans-serif" }}>
-      <ModeTopBar mode={mode} />
+      <ModeTopBar mode={mode} storeSettings={storeSettings} />
       {mode === "store" ? (
         authUser === undefined ? (
           <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
@@ -434,8 +437,9 @@ export default function App() {
               onSetCustomerStatus={handleSetCustomerStatus}
               onDeleteCustomer={handleDeleteCustomer}
               onReissueCustomer={handleReissueCustomer}
-              lineUrl={lineUrl}
-              onSaveLineUrl={handleSaveLineUrl}
+              lineUrl={storeSettings.lineUrl || ""}
+              storeSettings={storeSettings}
+              onSaveStoreSettings={handleSaveStoreSettings}
             />
             <div className="max-w-md mx-auto px-4 pb-6">
               <button
@@ -505,6 +509,7 @@ export default function App() {
           history={account.history || []}
           rankingEnabled={rankingEnabled}
           customerId={myCustomerId}
+          storeSettings={storeSettings}
         />
       )}
     </div>
