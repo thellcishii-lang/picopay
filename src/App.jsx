@@ -27,10 +27,7 @@ import {
   sendPhoneCode,
 } from "./firebase.js";
 
-// Which role this page is depends on the URL, not a button:
-//   /store    → store admin screen (share this URL with staff devices)
-//   /customer → customer screen (share this URL, or the setup link, with customers)
-//   anything else defaults to /store, so the bare site URL still works.
+// モード判定: /customer なら顧客画面、それ以外は店舗管理画面
 function modeFromPath() {
   return window.location.pathname.startsWith("/customer") ? "customer" : "store";
 }
@@ -127,8 +124,6 @@ function PhoneVerifyGate({ expectedPhone, onVerified }) {
       const result = await sendPhoneCode(expectedPhone, verifierRef.current);
       setConfirmation(result);
     } catch (e) {
-      // A failed attempt often leaves the reCAPTCHA verifier in a bad
-      // state — drop it so the next click creates a fresh one.
       if (verifierRef.current) {
         try { verifierRef.current.clear(); } catch (_) {}
         verifierRef.current = null;
@@ -202,9 +197,6 @@ function PhoneVerifyGate({ expectedPhone, onVerified }) {
   );
 }
 
-// Turns a horizontal logo image into a square icon (for the home-screen
-// icon), by centering it on a padded square canvas. Returns a Promise of a
-// data URL.
 function padLogoToSquareIcon(logoDataUrl, size = 512, background = "#FBF7F0") {
   return new Promise((resolve) => {
     const img = new Image();
@@ -231,24 +223,19 @@ function padLogoToSquareIcon(logoDataUrl, size = 512, background = "#FBF7F0") {
 export default function App() {
   const [mode] = useState(modeFromPath);
 
-  // ---- Auth state (shared: applies to whichever mode this page is) ----
-  const [authUser, setAuthUser] = useState(undefined); // undefined = not checked yet, null = signed out
+  // Auth 状態
+  const [authUser, setAuthUser] = useState(undefined);
   useEffect(() => {
     const unsubscribe = subscribeToAuth(setAuthUser);
     return () => unsubscribe();
   }, []);
 
-  // Shared branding/settings the store configures once — LINE URL, logo/icon,
-  // store name, and the customer-side hero image. Fetched on both sides
-  // (store needs it to edit, customer needs it to render their own header).
+  // 店舗設定
   const [storeSettings, setStoreSettingsState] = useState({});
   useEffect(() => {
     getStoreSettings().then(setStoreSettingsState);
   }, [mode]);
 
-  // Sensitive credentials (LINE API keys etc.) — only fetched once the
-  // store staff is actually signed in, since the security rules restrict
-  // this node to email-authenticated users.
   const [storeSecrets, setStoreSecretsState] = useState({});
   useEffect(() => {
     if (mode === "store" && authUser) {
@@ -256,17 +243,10 @@ export default function App() {
     }
   }, [mode, authUser]);
 
-  // rankingEnabled/weatherEnabled used to be local, per-device state, which
-  // meant toggling them in store settings never actually reached the
-  // customer's screen (each device had its own default). They now live in
-  // the shared storeSettings, same as everything else configurable.
   const rankingEnabled = storeSettings.rankingEnabled ?? true;
   const weatherEnabled = storeSettings.weatherEnabled ?? true;
 
-  // Whenever branding changes, update the home-screen ("Add to Home
-  // Screen") icon: the square icon if the store uploaded one, or the
-  // horizontal logo padded into a square, or fall back to PicoPay's own
-  // icon if nothing is configured.
+  // ファビコン・マニフェストの設定
   useEffect(() => {
     let cancelled = false;
     const apply = async () => {
@@ -299,7 +279,7 @@ export default function App() {
     };
   }, [storeSettings.brandMode, storeSettings.iconImage, storeSettings.logoImage, storeSettings.storeName]);
 
-  // ---- Store-side: the full customer list ----
+  // 顧客リスト管理（店舗側）
   const [customers, setCustomers] = useState([]);
   const refreshCustomers = useCallback(async () => {
     const list = await listCustomers();
@@ -343,9 +323,6 @@ export default function App() {
     await refreshCustomers();
   };
 
-  // A store device charges/deducts whichever customer it just scanned — it
-  // doesn't hold a live subscription to any one account, just does a
-  // one-off read-modify-write each time.
   const applyToAccount = async (customerId, updater) => {
     const current = await getAccountOnce(customerId);
     if (current.status && current.status !== "active") {
@@ -361,9 +338,6 @@ export default function App() {
     return next;
   };
 
-  // For the customer updating their own profile (e.g. notification
-  // preferences) — no store-side customer-list refresh needed here, and a
-  // suspended/blacklisted customer should still be able to change this.
   const applyToOwnAccount = async (customerId, updater) => {
     const current = await getAccountOnce(customerId);
     const next = updater(current);
@@ -375,11 +349,6 @@ export default function App() {
     let pushToken = null;
     if (prefs.push) {
       pushToken = await requestPushToken();
-      if (!pushToken) {
-        // Permission denied, or the browser doesn't support push — keep the
-        // checkbox state the customer chose, but there's no token to save,
-        // so nothing will actually be deliverable until they allow it.
-      }
     }
     await applyToOwnAccount(customerId, (prev) => {
       const existingTokens = prev.pushTokens || [];
@@ -409,9 +378,7 @@ export default function App() {
 
   const handleCharge = async (amount, customerId) => {
     if (!customerId) return;
-    const result = await applyToAccount(customerId, (prev) => {
-      // If this customer was referred and hasn't received their referral
-      // bonus yet, this first charge is what triggers both bonuses.
+    await applyToAccount(customerId, (prev) => {
       const giveReferralBonus =
         storeSettings.referralEnabled && prev.referredBy && !prev.referralBonusGiven;
       const refereeBonus = giveReferralBonus
@@ -452,32 +419,6 @@ export default function App() {
         history,
       };
     });
-
-    // If a referral bonus was just triggered, also credit the referrer —
-    // this is a separate account, so it's a second, independent update.
-    if (storeSettings.referralEnabled && result.referredBy && result.referralBonusGiven) {
-      const referrerBonus = Math.round(amount * ((storeSettings.referralReferrerRate || 0) / 100));
-      if (referrerBonus > 0) {
-        try {
-          await applyToAccount(result.referredBy, (prev) => ({
-            ...prev,
-            pointBalance: (prev.pointBalance || 0) + referrerBonus,
-            history: [
-              {
-                date: "今日",
-                summary: `お友達紹介ボーナス+${storeSettings.referralReferrerRate}%`,
-                total: referrerBonus,
-                items: [{ label: "お友達紹介ボーナス(紹介した方)", amount: referrerBonus }],
-              },
-              ...(prev.history || []),
-            ],
-          }));
-        } catch (e) {
-          // If the referrer's account is blacklisted/suspended/deleted, just
-          // skip their bonus rather than failing the referee's charge.
-        }
-      }
-    }
   };
 
   const computePurchasePoints = (amount) => {
@@ -530,7 +471,7 @@ export default function App() {
 
   const totalBalance = customers.reduce((s, c) => s + c.balance, 0);
 
-  // ---- Customer-side: this device's own account ----
+  // ---- Customer-side: 顧客側ロジック ----
   const [myCustomerId, setMyCustomerId] = useState(() => {
     if (typeof window === "undefined") return null;
     const params = new URLSearchParams(window.location.search);
@@ -544,13 +485,8 @@ export default function App() {
   const [setupInput, setSetupInput] = useState("");
   const [account, setAccount] = useState(DEFAULT_ACCOUNT);
   const [accountLoaded, setAccountLoaded] = useState(false);
-  // The phone number on file for this account, and whether verification is
-  // required at all — fetched via a public, read-only lookup so we can
-  // decide whether the gate is needed *before* the customer is
-  // authenticated (see getAccountVerificationInfo in firebase.js).
-  const [myPhone, setMyPhone] = useState(undefined); // undefined = not checked yet, null = no phone on file
+  const [myPhone, setMyPhone] = useState(undefined);
   const [requireVerification, setRequireVerification] = useState(true);
-  // Has this device's phone been verified against this account's phone yet?
   const [phoneVerified, setPhoneVerified] = useState(false);
 
   useEffect(() => {
@@ -567,11 +503,8 @@ export default function App() {
     };
   }, [mode, myCustomerId]);
 
-  // If this browser session's Firebase Auth phone number already matches the
-  // account's registered phone, or verification isn't required at all, skip
-  // the verification screen and load the real account data.
   useEffect(() => {
-    if (myPhone === undefined) return; // still checking
+    if (myPhone === undefined) return;
     if (!myPhone || !requireVerification || authUser?.phoneNumber === myPhone) {
       setPhoneVerified(true);
     }
@@ -586,40 +519,6 @@ export default function App() {
     });
     return () => unsubscribe();
   }, [mode, myCustomerId, phoneVerified]);
-
-  // If this page was opened via the LIFF link (customer tapped "LINEアカウ
-  // ントと連携する"), it's running inside LINE's in-app browser — grab the
-  // LINE profile and save the userId against this customer's account.
-  useEffect(() => {
-    if (mode !== "customer" || !myCustomerId || !phoneVerified) return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("linkLine") !== "1") return;
-    if (!storeSettings.lineLiffId) return;
-
-    let cancelled = false;
-    const link = async () => {
-      try {
-        if (!window.liff) return;
-        await window.liff.init({ liffId: storeSettings.lineLiffId });
-        if (!window.liff.isLoggedIn()) {
-          window.liff.login();
-          return;
-        }
-        const profile = await window.liff.getProfile();
-        if (cancelled) return;
-        await applyToOwnAccount(myCustomerId, (prev) => ({ ...prev, lineUserId: profile.userId }));
-        const url = new URL(window.location.href);
-        url.searchParams.delete("linkLine");
-        window.history.replaceState({}, "", url.toString());
-      } catch (e) {
-        // Customer can just try the "連携する" button again.
-      }
-    };
-    link();
-    return () => {
-      cancelled = true;
-    };
-  }, [mode, myCustomerId, phoneVerified, storeSettings.lineLiffId]);
 
   const handleUseBonusSpin = (rate) => {
     if (!myCustomerId) return;
@@ -643,7 +542,6 @@ export default function App() {
   };
 
   const confirmSetup = () => {
-    // Accept a plain ID, a scanned "PICOPAY-SETUP:<id>" value, or a full setup URL.
     const raw = setupInput.trim();
     let id = raw;
     if (raw.startsWith("PICOPAY-SETUP:")) id = raw.split(":")[1];
