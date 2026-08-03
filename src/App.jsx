@@ -615,7 +615,8 @@ export default function App() {
         ) : !authUser ? (
           <StoreLogin />
         ) : (
-          <StoreView
+          <>
+            <StoreView
               totalBalance={totalBalance}
               onCharge={handleCharge}
               onDeduct={handleDeduct}
@@ -632,8 +633,17 @@ export default function App() {
               storeSettings={storeSettings}
               onSaveStoreSettings={handleSaveStoreSettings}
               onSendPush={handleSendPush}
-              onSignOut={storeSignOut}
             />
+            <div className="max-w-md mx-auto px-4 pb-6">
+              <button
+                onClick={storeSignOut}
+                className="text-[11px] font-semibold"
+                style={{ color: C.mute }}
+              >
+                ログアウト({authUser.email})
+              </button>
+            </div>
+          </>
         )
       ) : !myCustomerId ? (
         <div className="max-w-md mx-auto px-4 pt-8">
