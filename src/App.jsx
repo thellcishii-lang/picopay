@@ -10,6 +10,7 @@ import {
   listCustomers,
   setCustomerStatus,
   deleteCustomerPermanently,
+  reissueCustomerAccess,
   DEFAULT_ACCOUNT,
   auth,
   subscribeToAuth,
@@ -235,6 +236,11 @@ export default function App() {
     await refreshCustomers();
   };
 
+  const handleReissueCustomer = async ({ customerId, newPhone, idPhotoDataUrl }) => {
+    await reissueCustomerAccess({ customerId, newPhone, idPhotoDataUrl });
+    await refreshCustomers();
+  };
+
   // A store device charges/deducts whichever customer it just scanned — it
   // doesn't hold a live subscription to any one account, just does a
   // one-off read-modify-write each time.
@@ -416,6 +422,7 @@ export default function App() {
               onFetchCustomerDetail={getAccountOnce}
               onSetCustomerStatus={handleSetCustomerStatus}
               onDeleteCustomer={handleDeleteCustomer}
+              onReissueCustomer={handleReissueCustomer}
             />
             <div className="max-w-md mx-auto px-4 pb-6">
               <button
