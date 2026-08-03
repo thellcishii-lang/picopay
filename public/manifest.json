@@ -1,0 +1,11 @@
+{
+  "name": "PicoPay",
+  "short_name": "PicoPay",
+  "start_url": "/store",
+  "display": "standalone",
+  "background_color": "#FBF7F0",
+  "theme_color": "#0E6E5C",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
