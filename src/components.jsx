@@ -1165,14 +1165,14 @@ function ChargeScreen({ onCharge, onDeduct }) {
 
 
 // ---------------- CUSTOMER REGISTRATION ----------------
-function CustomerRegistration({ onDone, onRegister, existingCustomers, lineUrl }) {
+function CustomerRegistration({ onDone, onRegister, existingCustomers }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [referredBy, setReferredBy] = useState("");
   const [issueMethod, setIssueMethod] = useState("qr"); // "qr" | "card"
   const [requireVerification, setRequireVerification] = useState(true);
-  const [notify, setNotify] = useState({ email: true, line: true });
+  const [notify, setNotify] = useState({ email: true });
   const [issued, setIssued] = useState(null);
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState(null);
@@ -1236,22 +1236,6 @@ function CustomerRegistration({ onDone, onRegister, existingCustomers, lineUrl }
         <div className="text-[10px] mt-1" style={{ color: C.mute }}>
           このQRはお客様の初回設定用です(決済用QRとは別物です)
         </div>
-
-        {notify.line && lineUrl && (
-          <div className="mt-3 rounded-xl p-3" style={{ background: "#fff" }}>
-            <div className="text-[11px] font-semibold" style={{ color: C.ink }}>
-              LINE通知を受け取るには、お客様のスマホでこちらを読み取って友だち追加してください
-            </div>
-            <div className="mt-2 flex justify-center">
-              <QRCodeSVG value={lineUrl} size={80} level="M" />
-            </div>
-          </div>
-        )}
-        {notify.line && !lineUrl && (
-          <div className="mt-3 rounded-xl p-3 text-[11px]" style={{ background: "#fff", color: C.mute }}>
-            LINE公式アカウントが未設定です。設定タブから登録すると、ここにQRコードが表示されます
-          </div>
-        )}
 
         <button
           onClick={onDone}
@@ -1344,14 +1328,6 @@ function CustomerRegistration({ onDone, onRegister, existingCustomers, lineUrl }
             onChange={(e) => setNotify((n) => ({ ...n, email: e.target.checked }))}
           />
           メール通知
-        </label>
-        <label className="flex items-center gap-1.5">
-          <input
-            type="checkbox"
-            checked={notify.line}
-            onChange={(e) => setNotify((n) => ({ ...n, line: e.target.checked }))}
-          />
-          LINE通知(友だち追加が必要)
         </label>
       </div>
 
@@ -1699,12 +1675,11 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
   );
 }
 
-// ---------------- BROADCAST (配信) — shared UI for one channel ----------------
-// This is the UI skeleton only — sending a real push notification or LINE
-// message requires a server-side function (to call Firebase Cloud
-// Messaging / the LINE Messaging API), which isn't wired up yet. For now,
-// "send" just resolves the recipient list and records a history entry so
-// the layout and flows can be reviewed before the backend is built.
+// ---------------- BROADCAST (配信) — shared UI for a broadcast channel ----------------
+// Sending push notifications goes through a server-side function (Netlify
+// Functions + Firebase Cloud Messaging, see App.jsx's handleSendPush) that
+// actually delivers the message. Group management and history are handled
+// entirely here.
 const MAX_BROADCAST_GROUPS = 10;
 
 function ChannelBroadcastSection({ channelKey, channelLabel, customers, storeSettings, onSave, onSend }) {
@@ -2090,327 +2065,16 @@ function ChannelBroadcastSection({ channelKey, channelLabel, customers, storeSet
   );
 }
 
-function BroadcastPanel({ customers, storeSettings, onSave, onSendPush, storeSecrets = {}, onSaveSecrets }) {
-  const [showLineSetup, setShowLineSetup] = useState(false);
-  const [apiKeyDraft, setApiKeyDraft] = useState("");
-  const [keyError, setKeyError] = useState(null);
-
-  const [showLiffSetup, setShowLiffSetup] = useState(false);
-  const [liffIdDraft, setLiffIdDraft] = useState("");
-  const [liffError, setLiffError] = useState(null);
-
-  const lineApiKey = storeSecrets.lineApiKey || "";
-  const lineLiffId = storeSettings.lineLiffId || "";
-
-  const submitApiKey = async () => {
-    setKeyError(null);
-    // UI-only validation for now — a real check would call the LINE API via
-    // a server function to confirm the token actually works.
-    if (apiKeyDraft.trim().length < 20) {
-      setKeyError("APIキーの形式が正しくないようです。LINE Developersからコピーした値を確認してください");
-      return;
-    }
-    await onSaveSecrets({ lineApiKey: apiKeyDraft.trim() });
-    setApiKeyDraft("");
-    setShowLineSetup(false);
-  };
-
-  const submitLiffId = async () => {
-    setLiffError(null);
-    if (!liffIdDraft.trim()) {
-      setLiffError("LINE DevelopersのLIFFタブに表示されているLIFF IDを入力してください");
-      return;
-    }
-    await onSave({ lineLiffId: liffIdDraft.trim() });
-    setLiffIdDraft("");
-    setShowLiffSetup(false);
-  };
-
+function BroadcastPanel({ customers, storeSettings, onSave, onSendPush }) {
   return (
-    <>
-      <ChannelBroadcastSection
-        channelKey="push"
-        channelLabel="プッシュ通知"
-        customers={customers}
-        storeSettings={storeSettings}
-        onSave={onSave}
-        onSend={onSendPush}
-      />
-
-      <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
-        <div className="text-sm font-bold" style={{ color: C.ink }}>LINE配信</div>
-        <div className="text-[11px] mt-1" style={{ color: C.mute }}>
-          無料で月200件までは送信可能。それ以上はLINEのライトプラン以上へのご契約が個別に必要になります。
-        </div>
-
-        {!lineApiKey && !showLineSetup && (
-          <button
-            onClick={() => setShowLineSetup(true)}
-            className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
-            style={{ background: "#06C755", color: "#fff" }}
-          >
-            LINE配信を始める
-          </button>
-        )}
-
-        {!lineApiKey && showLineSetup && (
-          <div className="mt-3">
-            <input
-              value={apiKeyDraft}
-              onChange={(e) => setApiKeyDraft(e.target.value)}
-              placeholder="LINE Messaging APIのチャネルアクセストークン"
-              className="w-full rounded-lg px-3 py-2 text-sm outline-none"
-              style={{ background: C.cream, color: C.ink }}
-            />
-            {keyError && (
-              <div className="mt-1 text-[11px] font-semibold" style={{ color: C.coral }}>{keyError}</div>
-            )}
-            <button
-              onClick={submitApiKey}
-              disabled={!apiKeyDraft.trim()}
-              className="mt-2 w-full rounded-full py-2.5 text-sm font-bold"
-              style={{ background: apiKeyDraft.trim() ? "#06C755" : C.line, color: apiKeyDraft.trim() ? "#fff" : C.mute }}
-            >
-              送信
-            </button>
-          </div>
-        )}
-
-        <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
-            <div className="text-[11px] font-semibold" style={{ color: C.ink }}>
-              お客様とLINEアカウントの紐付け(LIFF連携)
-            </div>
-            <div className="text-[10px] mt-1" style={{ color: C.mute }}>
-              「どのお客様が友だち追加したか」を特定するために、LINEログインチャネルの中の「LIFF」タブでLIFFアプリを1つ登録し(エンドポイントURLは{`{`}このサイトのURL{`}`}/customer)、発行されたLIFF IDを入力してください。
-            </div>
-            {lineLiffId ? (
-              <div className="mt-2 text-[11px] font-semibold" style={{ color: C.teal }}>✓ 連携設定済み</div>
-            ) : !showLiffSetup ? (
-              <button
-                onClick={() => setShowLiffSetup(true)}
-                className="mt-2 w-full rounded-full py-2 text-xs font-semibold"
-                style={{ background: C.cream, color: C.ink }}
-              >
-                LIFF連携を設定する
-              </button>
-            ) : (
-              <div className="mt-2 space-y-2">
-                <input
-                  value={liffIdDraft}
-                  onChange={(e) => setLiffIdDraft(e.target.value)}
-                  placeholder="LIFF ID(例: 1234567890-AbCdEfGh)"
-                  className="w-full rounded-lg px-3 py-2 text-sm outline-none"
-                  style={{ background: C.cream, color: C.ink }}
-                />
-                {liffError && (
-                  <div className="text-[11px] font-semibold" style={{ color: C.coral }}>{liffError}</div>
-                )}
-                <button
-                  onClick={submitLiffId}
-                  className="w-full rounded-full py-2 text-xs font-bold"
-                  style={{ background: C.teal, color: "#fff" }}
-                >
-                  保存
-                </button>
-              </div>
-            )}
-        </div>
-      </div>
-
-      {lineApiKey && (
-        <ChannelBroadcastSection
-          channelKey="line"
-          channelLabel="LINE配信"
-          customers={customers}
-          storeSettings={storeSettings}
-          onSave={onSave}
-        />
-      )}
-    </>
-  );
-}
-
-function LineSettings({ lineUrl, onSave }) {
-  const [value, setValue] = useState(lineUrl || "");
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    setValue(lineUrl || "");
-  }, [lineUrl]);
-
-  const save = async () => {
-    await onSave({ lineUrl: value.trim() });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
-
-  return (
-    <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
-      <div className="text-sm font-bold" style={{ color: C.ink }}>LINE公式アカウント連携</div>
-      <div className="text-[11px] mt-1" style={{ color: C.mute }}>
-        ここに設定したURLのQRコードが、お客様登録完了画面に表示され、お客様がそのまま友だち追加できるようになります
-      </div>
-      <input
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        placeholder="LINE公式アカウントのURL(例: https://lin.ee/xxxxxxx)"
-        className="mt-3 w-full rounded-lg px-3 py-2 text-sm outline-none"
-        style={{ background: C.cream, color: C.ink }}
-      />
-      {value && (
-        <div className="mt-3 flex justify-center">
-          <div className="rounded-lg bg-white p-3">
-            <QRCodeSVG value={value} size={100} level="M" />
-          </div>
-        </div>
-      )}
-      <button
-        onClick={save}
-        className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
-        style={{ background: C.teal, color: "#fff" }}
-      >
-        {saved ? "✓ 保存しました" : "保存"}
-      </button>
-    </div>
-  );
-}
-
-// ---------------- STORE BRANDING SETTINGS ----------------
-function compressImage(file, maxDim, quality, onDone, onError) {
-  const reader = new FileReader();
-  reader.onerror = () => onError && onError();
-  reader.onload = () => {
-    const img = new Image();
-    img.onerror = () => onError && onError();
-    img.onload = () => {
-      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-      const canvas = document.createElement("canvas");
-      canvas.width = img.width * scale;
-      canvas.height = img.height * scale;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      onDone(canvas.toDataURL("image/jpeg", quality));
-    };
-    img.src = reader.result;
-  };
-  reader.readAsDataURL(file);
-}
-
-function ImageUploadButton({ id, label, currentImage, onImageReady, maxDim = 800 }) {
-  const [error, setError] = useState(null);
-  return (
-    <div>
-      <label htmlFor={id}>
-        <input
-          type="file"
-          accept="image/*"
-          id={id}
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (!file) return;
-            setError(null);
-            compressImage(
-              file,
-              maxDim,
-              0.8,
-              (dataUrl) => onImageReady(dataUrl),
-              () => setError("画像の読み込みに失敗しました")
-            );
-          }}
-        />
-        <span
-          className="block w-full text-center rounded-lg py-2 text-[11px] font-semibold cursor-pointer"
-          style={{ background: currentImage ? C.coralSoft : C.cream, color: currentImage ? C.coral : C.ink }}
-        >
-          {currentImage ? `✓ ${label}(変更する)` : label}
-        </span>
-      </label>
-      {error && <div className="mt-1 text-[10px]" style={{ color: C.coral }}>{error}</div>}
-    </div>
-  );
-}
-
-// ---------------- REFERRAL PROGRAM SETTINGS ----------------
-function ReferralSettings({ storeSettings, onSave }) {
-  const [enabled, setEnabled] = useState(storeSettings.referralEnabled || false);
-  const [referrerRate, setReferrerRate] = useState(storeSettings.referralReferrerRate ?? 10);
-  const [refereeRate, setRefereeRate] = useState(storeSettings.referralRefereeRate ?? 10);
-  const [saved, setSaved] = useState(false);
-
-  const save = async () => {
-    await onSave({
-      referralEnabled: enabled,
-      referralReferrerRate: Number(referrerRate),
-      referralRefereeRate: Number(refereeRate),
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
-
-  return (
-    <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
-      <div className="flex items-center justify-between">
-        <div className="text-sm font-bold" style={{ color: C.ink }}>お友達紹介プログラム</div>
-        <button
-          onClick={() => setEnabled(!enabled)}
-          className="relative w-11 h-6 rounded-full transition-colors shrink-0"
-          style={{ background: enabled ? C.teal : C.line }}
-        >
-          <span
-            className="absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform"
-            style={{ transform: enabled ? "translateX(22px)" : "translateX(2px)" }}
-          />
-        </button>
-      </div>
-      <div className="text-[11px] mt-1" style={{ color: C.mute }}>
-        紹介されたお客様が初めてチャージした金額に応じて、紹介した人・された人の両方にポイントを付与します
-      </div>
-
-      {enabled && (
-        <>
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <div>
-              <div className="text-[11px] font-semibold" style={{ color: C.ink }}>紹介した人への還元率</div>
-              <div className="mt-1 flex items-center rounded-lg" style={{ background: C.cream }}>
-                <input
-                  type="number"
-                  value={referrerRate}
-                  onChange={(e) => setReferrerRate(e.target.value)}
-                  className="w-full bg-transparent px-3 py-2 text-sm font-semibold outline-none"
-                  style={{ color: C.ink }}
-                />
-                <span className="pr-3 text-xs font-semibold" style={{ color: C.mute }}>%</span>
-              </div>
-            </div>
-            <div>
-              <div className="text-[11px] font-semibold" style={{ color: C.ink }}>紹介された人への還元率</div>
-              <div className="mt-1 flex items-center rounded-lg" style={{ background: C.cream }}>
-                <input
-                  type="number"
-                  value={refereeRate}
-                  onChange={(e) => setRefereeRate(e.target.value)}
-                  className="w-full bg-transparent px-3 py-2 text-sm font-semibold outline-none"
-                  style={{ color: C.ink }}
-                />
-                <span className="pr-3 text-xs font-semibold" style={{ color: C.mute }}>%</span>
-              </div>
-            </div>
-          </div>
-          <div className="text-[10px] mt-2" style={{ color: C.mute }}>
-            例:紹介された方が初回¥10,000チャージした場合、紹介者にP{Math.round(10000 * (referrerRate / 100))}・紹介された方にP{Math.round(10000 * (refereeRate / 100))}が付与されます
-          </div>
-        </>
-      )}
-
-      <button
-        onClick={save}
-        className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
-        style={{ background: C.teal, color: "#fff" }}
-      >
-        {saved ? "✓ 保存しました" : "保存"}
-      </button>
-    </div>
+    <ChannelBroadcastSection
+      channelKey="push"
+      channelLabel="プッシュ通知"
+      customers={customers}
+      storeSettings={storeSettings}
+      onSave={onSave}
+      onSend={onSendPush}
+    />
   );
 }
 
@@ -2660,13 +2324,12 @@ function StoreBrandingSettings({ storeSettings, onSave }) {
   );
 }
 
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, lineUrl, storeSettings = {}, onSaveStoreSettings, onSendPush, storeSecrets = {}, onSaveStoreSecrets }) {
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, storeSettings = {}, onSaveStoreSettings, onSendPush }) {
   const [tab, setTab] = useState("dashboard");
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [customerSearch, setCustomerSearch] = useState("");
-  const [showLineQrModal, setShowLineQrModal] = useState(false);
 
   // Switching tabs (概況/決済/配信/設定) should always start at the top —
   // otherwise the page keeps whatever scroll position it had before.
@@ -2727,85 +2390,6 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
         ))}
       </div>
 
-      {lineUrl && (
-        <button
-          onClick={() => setShowLineQrModal(true)}
-          className="mt-4 w-full rounded-2xl py-3 text-sm font-bold flex items-center justify-center gap-2"
-          style={{ background: "#06C755", color: "#fff" }}
-        >
-          お店のLINE QRコードを表示
-        </button>
-      )}
-
-      {showLineQrModal && (
-        <div
-          className="fixed inset-0 z-50 flex flex-col px-6 py-6"
-          style={{ background: "#06C755" }}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              {storeSettings.brandMode === "logo" && storeSettings.logoImage ? (
-                <img
-                  src={storeSettings.logoImage}
-                  alt="店舗ロゴ"
-                  style={{ height: BRANDING_SIZES.logoHeight, maxWidth: BRANDING_SIZES.logoWidth, objectFit: "contain" }}
-                />
-              ) : storeSettings.brandMode === "iconName" && storeSettings.iconImage && storeSettings.storeName ? (
-                <>
-                  <div
-                    className="h-9 w-9 overflow-hidden shrink-0"
-                    style={{ borderRadius: storeSettings.iconShape === "square" ? 10 : 9999 }}
-                  >
-                    <img src={storeSettings.iconImage} alt={storeSettings.storeName} className="h-9 w-9 object-cover" />
-                  </div>
-                  <div
-                    className="text-[15px] leading-none"
-                    style={{
-                      color: "#fff",
-                      fontFamily: storeSettings.storeNameFont === "mincho" ? "'Hiragino Mincho ProN', serif" : "'Hiragino Sans', sans-serif",
-                      fontWeight: storeSettings.storeNameWeight === "bold" ? 700 : 500,
-                    }}
-                  >
-                    {storeSettings.storeName}
-                  </div>
-                </>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <div className="h-9 w-9 rounded-full overflow-hidden bg-white/20 flex items-center justify-center">
-                    <img src={PICO.logo} alt="ピコ" className="h-9 w-9 object-cover scale-125" />
-                  </div>
-                  <div className="text-[15px] font-bold text-white">PicoPay</div>
-                </div>
-              )}
-            </div>
-            <button
-              onClick={() => setShowLineQrModal(false)}
-              className="rounded-full px-4 py-2 text-xs font-semibold flex items-center gap-1"
-              style={{ background: "rgba(255,255,255,0.2)", color: "#fff" }}
-            >
-              <ChevronLeft size={14} /> 概況に戻る
-            </button>
-          </div>
-
-          <div className="flex-1 flex flex-col items-center justify-center">
-            <div className="text-white text-sm font-bold mb-4">友だち追加はこちらから</div>
-            <div className="rounded-2xl bg-white p-6">
-              <QRCodeSVG value={lineUrl} size={220} level="M" />
-            </div>
-            <button
-              onClick={() => {
-                setShowLineQrModal(false);
-                setTab("settings");
-              }}
-              className="mt-4 rounded-full px-5 py-2 text-xs font-semibold"
-              style={{ background: "rgba(255,255,255,0.2)", color: "#fff" }}
-            >
-              LINE URLを変更する
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Guerrilla campaign card — the "signature" element */}
       {weatherEnabled && (
         <div
@@ -2822,7 +2406,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
                 今日は雨予報 ☔ 配信しますか?
               </div>
               <div className="text-[11px] mt-1" style={{ color: C.mute }}>
-                5万円まで20%ボーナス・LINE通知で一斉配信
+                5万円まで20%ボーナス・プッシュ通知で一斉配信
               </div>
             </div>
           </div>
@@ -2868,7 +2452,6 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
               onRegister={onRegisterCustomer}
               onDone={() => setShowRegister(false)}
               existingCustomers={customers}
-              lineUrl={lineUrl}
             />
           )}
 
@@ -2958,7 +2541,6 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
           <SystemSafetySettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <WeatherCampaignSettings weatherEnabled={weatherEnabled} setWeatherEnabled={setWeatherEnabled} storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <StoreBrandingSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
-          <LineSettings lineUrl={lineUrl} onSave={onSaveStoreSettings} />
         </>
       )}
 
@@ -2970,8 +2552,6 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
           storeSettings={storeSettings}
           onSave={onSaveStoreSettings}
           onSendPush={onSendPush}
-          storeSecrets={storeSecrets}
-          onSaveSecrets={onSaveStoreSecrets}
         />
       )}
 
@@ -2999,11 +2579,10 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
 }
 
 // ---------------- CUSTOMER VIEW ----------------
-function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusSpin, history, rankingEnabled, customerId, storeSettings = {}, notifyOptIn, onUpdateNotifyPrefs, lineUserId }) {
+function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusSpin, history, rankingEnabled, customerId, storeSettings = {}, notifyOptIn, onUpdateNotifyPrefs }) {
   const [showNotifySettings, setShowNotifySettings] = useState(false);
   const [notifyDraft, setNotifyDraft] = useState({
     push: notifyOptIn?.push || false,
-    line: notifyOptIn?.line || false,
   });
   const [notifySaved, setNotifySaved] = useState(false);
   const [showPushHistory, setShowPushHistory] = useState(false);
@@ -3311,32 +2890,6 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
                   </div>
                 ))}
               </div>
-            )}
-
-            <label className="mt-3 flex items-center justify-between text-[13px]" style={{ color: C.ink }}>
-              <span>LINE通知を受け取る</span>
-              <input
-                type="checkbox"
-                checked={notifyDraft.line}
-                onChange={(e) => setNotifyDraft((d) => ({ ...d, line: e.target.checked }))}
-              />
-            </label>
-
-            {notifyDraft.line && storeSettings.lineLiffId && (
-              lineUserId ? (
-                <div className="mt-1 text-[11px] font-semibold" style={{ color: C.teal }}>✓ LINEアカウントと連携済み</div>
-              ) : (
-                <button
-                  onClick={() => {
-                    const url = `https://liff.line.me/${storeSettings.lineLiffId}?id=${encodeURIComponent(customerId)}&linkLine=1`;
-                    window.location.href = url;
-                  }}
-                  className="mt-1 w-full rounded-full py-2 text-[12px] font-semibold"
-                  style={{ background: "#06C755", color: "#fff" }}
-                >
-                  LINEアカウントと連携する
-                </button>
-              )
             )}
 
             <button
