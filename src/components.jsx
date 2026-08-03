@@ -877,6 +877,7 @@ function CustomerRegistration({ onDone, onRegister, existingCustomers, lineUrl }
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
+  const [referredBy, setReferredBy] = useState("");
   const [issueMethod, setIssueMethod] = useState("qr"); // "qr" | "card"
   const [requireVerification, setRequireVerification] = useState(true);
   const [notify, setNotify] = useState({ email: true, line: true });
@@ -912,7 +913,13 @@ function CustomerRegistration({ onDone, onRegister, existingCustomers, lineUrl }
     }
     setIssuing(true);
     try {
-      const customerId = await onRegister({ name, phone: normalizedPhone, email, requireVerification });
+      const customerId = await onRegister({
+        name,
+        phone: normalizedPhone,
+        email,
+        requireVerification,
+        referredBy: referredBy.trim() || null,
+      });
       setIssued(customerId);
     } catch (e) {
       setIssueError(e?.message || "登録に失敗しました。もう一度お試しください");
@@ -991,6 +998,13 @@ function CustomerRegistration({ onDone, onRegister, existingCustomers, lineUrl }
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="メールアドレス(通知用・任意)"
+          className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+          style={{ background: C.cream, color: C.ink }}
+        />
+        <input
+          value={referredBy}
+          onChange={(e) => setReferredBy(e.target.value)}
+          placeholder="紹介者のお客様ID(任意)"
           className="w-full rounded-lg px-3 py-2 text-sm outline-none"
           style={{ background: C.cream, color: C.ink }}
         />
@@ -1491,6 +1505,89 @@ function ImageUploadButton({ id, label, currentImage, onImageReady, maxDim = 800
         </span>
       </label>
       {error && <div className="mt-1 text-[10px]" style={{ color: C.coral }}>{error}</div>}
+    </div>
+  );
+}
+
+// ---------------- REFERRAL PROGRAM SETTINGS ----------------
+function ReferralSettings({ storeSettings, onSave }) {
+  const [enabled, setEnabled] = useState(storeSettings.referralEnabled || false);
+  const [referrerRate, setReferrerRate] = useState(storeSettings.referralReferrerRate ?? 10);
+  const [refereeRate, setRefereeRate] = useState(storeSettings.referralRefereeRate ?? 10);
+  const [saved, setSaved] = useState(false);
+
+  const save = async () => {
+    await onSave({
+      referralEnabled: enabled,
+      referralReferrerRate: Number(referrerRate),
+      referralRefereeRate: Number(refereeRate),
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  return (
+    <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-bold" style={{ color: C.ink }}>お友達紹介プログラム</div>
+        <button
+          onClick={() => setEnabled(!enabled)}
+          className="relative w-11 h-6 rounded-full transition-colors shrink-0"
+          style={{ background: enabled ? C.teal : C.line }}
+        >
+          <span
+            className="absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform"
+            style={{ transform: enabled ? "translateX(22px)" : "translateX(2px)" }}
+          />
+        </button>
+      </div>
+      <div className="text-[11px] mt-1" style={{ color: C.mute }}>
+        紹介されたお客様が初めてチャージした金額に応じて、紹介した人・された人の両方にポイントを付与します
+      </div>
+
+      {enabled && (
+        <>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <div>
+              <div className="text-[11px] font-semibold" style={{ color: C.ink }}>紹介した人への還元率</div>
+              <div className="mt-1 flex items-center rounded-lg" style={{ background: C.cream }}>
+                <input
+                  type="number"
+                  value={referrerRate}
+                  onChange={(e) => setReferrerRate(e.target.value)}
+                  className="w-full bg-transparent px-3 py-2 text-sm font-semibold outline-none"
+                  style={{ color: C.ink }}
+                />
+                <span className="pr-3 text-xs font-semibold" style={{ color: C.mute }}>%</span>
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] font-semibold" style={{ color: C.ink }}>紹介された人への還元率</div>
+              <div className="mt-1 flex items-center rounded-lg" style={{ background: C.cream }}>
+                <input
+                  type="number"
+                  value={refereeRate}
+                  onChange={(e) => setRefereeRate(e.target.value)}
+                  className="w-full bg-transparent px-3 py-2 text-sm font-semibold outline-none"
+                  style={{ color: C.ink }}
+                />
+                <span className="pr-3 text-xs font-semibold" style={{ color: C.mute }}>%</span>
+              </div>
+            </div>
+          </div>
+          <div className="text-[10px] mt-2" style={{ color: C.mute }}>
+            例:紹介された方が初回¥10,000チャージした場合、紹介者にP{Math.round(10000 * (referrerRate / 100))}・紹介された方にP{Math.round(10000 * (refereeRate / 100))}が付与されます
+          </div>
+        </>
+      )}
+
+      <button
+        onClick={save}
+        className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
+        style={{ background: C.teal, color: "#fff" }}
+      >
+        {saved ? "✓ 保存しました" : "保存"}
+      </button>
     </div>
   );
 }
@@ -2021,6 +2118,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
           <SystemSafetySettings />
           <WeatherCampaignSettings weatherEnabled={weatherEnabled} setWeatherEnabled={setWeatherEnabled} />
           <LineSettings lineUrl={lineUrl} onSave={onSaveStoreSettings} />
+          <ReferralSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <StoreBrandingSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
         </>
       )}
@@ -2277,6 +2375,19 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
               <div className="text-xs font-bold" style={{ color: C.teal }}>還元率 {r.rate}%</div>
             </div>
           ))}
+        </div>
+      )}
+      {/* Referral program — share this customer's ID with a friend */}
+      {storeSettings.referralEnabled && (
+        <div className="mt-5 rounded-2xl p-4" style={{ background: C.coralSoft }}>
+          <div className="text-sm font-bold" style={{ color: C.coral }}>お友達紹介</div>
+          <div className="text-[11px] mt-1" style={{ color: C.ink }}>
+            このIDをお友達に伝えて、登録時に入力してもらうと、お友達が初めてチャージした時にお二人ともポイントがもらえます
+          </div>
+          <div className="mt-2 rounded-lg bg-white px-3 py-2 text-center">
+            <div className="text-[10px]" style={{ color: C.mute }}>あなたの紹介ID</div>
+            <div className="text-sm font-bold tracking-wide" style={{ color: C.ink }}>{customerId}</div>
+          </div>
         </div>
       )}
     </div>
