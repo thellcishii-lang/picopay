@@ -862,14 +862,13 @@ function ChargeScreen({ onCharge, onDeduct }) {
 
 
 // ---------------- CUSTOMER REGISTRATION ----------------
-function CustomerRegistration({ onDone, onRegister, existingCustomers }) {
+function CustomerRegistration({ onDone, onRegister, existingCustomers, lineUrl }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [issueMethod, setIssueMethod] = useState("qr"); // "qr" | "card"
   const [requireVerification, setRequireVerification] = useState(true);
   const [notify, setNotify] = useState({ email: true, line: true });
-  const [lineLinked, setLineLinked] = useState(false);
   const [issued, setIssued] = useState(null);
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState(null);
@@ -928,33 +927,19 @@ function CustomerRegistration({ onDone, onRegister, existingCustomers }) {
           このQRはお客様の初回設定用です(決済用QRとは別物です)
         </div>
 
-        {notify.line && !lineLinked && (
+        {notify.line && lineUrl && (
           <div className="mt-3 rounded-xl p-3" style={{ background: "#fff" }}>
             <div className="text-[11px] font-semibold" style={{ color: C.ink }}>
-              LINE通知を受け取るには、お客様のスマホでこちらを読み取って「PicoPay公式」を友だち追加してください
+              LINE通知を受け取るには、お客様のスマホでこちらを読み取って友だち追加してください
             </div>
             <div className="mt-2 flex justify-center">
-              <div
-                className="w-16 h-16 rounded"
-                style={{
-                  backgroundImage:
-                    "repeating-linear-gradient(0deg, #0F2E2B 0 3px, transparent 3px 6px), repeating-linear-gradient(90deg, #0F2E2B 0 3px, transparent 3px 6px)",
-                  backgroundBlendMode: "multiply",
-                }}
-              />
+              <QRCodeSVG value={lineUrl} size={80} level="M" />
             </div>
-            <button
-              onClick={() => setLineLinked(true)}
-              className="mt-2 text-[11px] font-semibold"
-              style={{ color: C.teal }}
-            >
-              (デモ)友だち追加完了にする
-            </button>
           </div>
         )}
-        {notify.line && lineLinked && (
-          <div className="mt-3 text-[11px] font-semibold" style={{ color: C.teal }}>
-            ✓ LINE連携済み
+        {notify.line && !lineUrl && (
+          <div className="mt-3 rounded-xl p-3 text-[11px]" style={{ background: "#fff", color: C.mute }}>
+            LINE公式アカウントが未設定です。設定タブから登録すると、ここにQRコードが表示されます
           </div>
         )}
 
@@ -1137,9 +1122,12 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
   // hundred KB is plenty to visually confirm an ID.
   const handlePhotoSelected = (file) => {
     if (!file) return;
+    setReissueError(null);
     const reader = new FileReader();
+    reader.onerror = () => setReissueError("写真の読み込みに失敗しました。もう一度お試しください");
     reader.onload = () => {
       const img = new Image();
+      img.onerror = () => setReissueError("写真の処理に失敗しました。もう一度お試しください");
       img.onload = () => {
         const maxW = 800;
         const scale = Math.min(1, maxW / img.width);
@@ -1304,7 +1292,7 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
               <div className="text-[11px]" style={{ color: C.mute }}>
                 身分証明書(免許証・マイナンバーカード等、顔写真付き)を撮影して本人確認してください
               </div>
-              <label className="mt-2 block">
+              <label className="mt-2 block" htmlFor={`id-photo-${customerId}`}>
                 <input
                   type="file"
                   accept="image/*"
@@ -1316,7 +1304,6 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
                 <span
                   className="block w-full text-center rounded-lg py-2 text-[11px] font-semibold cursor-pointer"
                   style={{ background: idPhotoDataUrl ? C.coralSoft : C.cream, color: idPhotoDataUrl ? C.coral : C.ink }}
-                  onClick={() => document.getElementById(`id-photo-${customerId}`).click()}
                 >
                   {idPhotoDataUrl ? "✓ 撮影済み(撮り直す)" : "身分証明書を撮影する"}
                 </span>
@@ -1395,7 +1382,53 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
   );
 }
 
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer }) {
+// ---------------- LINE SETTINGS ----------------
+function LineSettings({ lineUrl, onSave }) {
+  const [value, setValue] = useState(lineUrl || "");
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setValue(lineUrl || "");
+  }, [lineUrl]);
+
+  const save = async () => {
+    await onSave(value.trim());
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  return (
+    <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+      <div className="text-sm font-bold" style={{ color: C.ink }}>LINE公式アカウント連携</div>
+      <div className="text-[11px] mt-1" style={{ color: C.mute }}>
+        ここに設定したURLのQRコードが、お客様登録完了画面に表示され、お客様がそのまま友だち追加できるようになります
+      </div>
+      <input
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="LINE公式アカウントのURL(例: https://lin.ee/xxxxxxx)"
+        className="mt-3 w-full rounded-lg px-3 py-2 text-sm outline-none"
+        style={{ background: C.cream, color: C.ink }}
+      />
+      {value && (
+        <div className="mt-3 flex justify-center">
+          <div className="rounded-lg bg-white p-3">
+            <QRCodeSVG value={value} size={100} level="M" />
+          </div>
+        </div>
+      )}
+      <button
+        onClick={save}
+        className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
+        style={{ background: C.teal, color: "#fff" }}
+      >
+        {saved ? "✓ 保存しました" : "保存"}
+      </button>
+    </div>
+  );
+}
+
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, lineUrl, onSaveLineUrl }) {
   const [tab, setTab] = useState("dashboard");
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
@@ -1517,6 +1550,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
               onRegister={onRegisterCustomer}
               onDone={() => setShowRegister(false)}
               existingCustomers={customers}
+              lineUrl={lineUrl}
             />
           )}
 
@@ -1603,6 +1637,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
           <RankSettings rankingEnabled={rankingEnabled} setRankingEnabled={setRankingEnabled} />
           <SystemSafetySettings />
           <WeatherCampaignSettings weatherEnabled={weatherEnabled} setWeatherEnabled={setWeatherEnabled} />
+          <LineSettings lineUrl={lineUrl} onSave={onSaveLineUrl} />
         </>
       )}
 
