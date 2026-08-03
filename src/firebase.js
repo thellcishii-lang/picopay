@@ -247,9 +247,8 @@ export async function listCustomers() {
 export { DEFAULT_ACCOUNT };
 
 // ---- Store-level settings (shared across all store devices) ----
-// Currently just the LINE official account URL, used to generate a real
-// QR code for customers to add as a friend. Structured as a general object
-// so future store-branding fields (icon, name, etc.) can live here too.
+// Branding (logo/icon/store name), the customer-side hero image, and other
+// store-wide configuration the store sets once and every device reads.
 export async function getStoreSettings() {
   const snapshot = await get(ref(db, "storeSettings"));
   return snapshot.val() || {};
@@ -257,17 +256,4 @@ export async function getStoreSettings() {
 
 export async function saveStoreSettings(settings) {
   await update(ref(db, "storeSettings"), settings);
-}
-
-// ---- Store-level SECRETS (LINE API keys, etc.) — separate from
-// storeSettings because storeSettings is publicly readable (customers need
-// it for branding/hero images). Only email-authenticated store staff can
-// read or write this node — see firebase-rules.json.
-export async function getStoreSecrets() {
-  const snapshot = await get(ref(db, "storeSecrets"));
-  return snapshot.val() || {};
-}
-
-export async function saveStoreSecrets(secrets) {
-  await update(ref(db, "storeSecrets"), secrets);
 }
