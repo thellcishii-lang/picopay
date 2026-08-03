@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import ModeTopBar from "./TopBar.jsx";
-import { C, StoreView, CustomerView } from "./components.jsx";
+import { C, StoreView, CustomerView, PICO_PLACEHOLDER, resolveBrandImage } from "./components.jsx";
 import {
   subscribeToAccount,
   getAccountOnce,
@@ -13,6 +13,8 @@ import {
   setCustomerStatus,
   deleteCustomerPermanently,
   reissueCustomerAccess,
+  requestPushToken,
+  sendPushNotification,
   DEFAULT_ACCOUNT,
   auth,
   subscribeToAuth,
@@ -234,16 +236,20 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Store-side view settings — per-device for now.
-  const [rankingEnabled, setRankingEnabled] = useState(true);
-  const [weatherEnabled, setWeatherEnabled] = useState(true);
-  // Shared branding/settings the store configures once — LINE URL, logo/icon,
-  // store name, and the customer-side hero image. Fetched on both sides
-  // (store needs it to edit, customer needs it to render their own header).
+  // Shared branding/settings the store configures once — logo/icon, store
+  // name, and the customer-side hero image. Fetched on both sides (store
+  // needs it to edit, customer needs it to render their own header).
   const [storeSettings, setStoreSettingsState] = useState({});
   useEffect(() => {
     getStoreSettings().then(setStoreSettingsState);
   }, [mode]);
+
+  // rankingEnabled/weatherEnabled used to be local, per-device state, which
+  // meant toggling them in store settings never actually reached the
+  // customer's screen (each device had its own default). They now live in
+  // the shared storeSettings, same as everything else configurable.
+  const rankingEnabled = storeSettings.rankingEnabled ?? true;
+  const weatherEnabled = storeSettings.weatherEnabled ?? true;
 
   // Whenever branding changes, update the home-screen ("Add to Home
   // Screen") icon: the square icon if the store uploaded one, or the
@@ -253,10 +259,12 @@ export default function App() {
     let cancelled = false;
     const apply = async () => {
       let iconUrl = null;
-      if (storeSettings.brandMode === "iconName" && storeSettings.iconImage) {
-        iconUrl = storeSettings.iconImage;
-      } else if (storeSettings.brandMode === "logo" && storeSettings.logoImage) {
-        iconUrl = await padLogoToSquareIcon(storeSettings.logoImage);
+      const icon = resolveBrandImage(storeSettings.iconImage, PICO_PLACEHOLDER.icon);
+      const logo = resolveBrandImage(storeSettings.logoImage, PICO_PLACEHOLDER.logo);
+      if (storeSettings.brandMode === "iconName" && icon) {
+        iconUrl = icon;
+      } else if (storeSettings.brandMode === "logo" && logo) {
+        iconUrl = await padLogoToSquareIcon(logo);
       }
       if (cancelled) return;
       const favicon = iconUrl || "/favicon.svg";
@@ -296,6 +304,9 @@ export default function App() {
     setStoreSettingsState((prev) => ({ ...prev, ...updates }));
   };
 
+  const handleSetRankingEnabled = (value) => handleSaveStoreSettings({ rankingEnabled: value });
+  const handleSetWeatherEnabled = (value) => handleSaveStoreSettings({ weatherEnabled: value });
+
   const handleRegisterCustomer = async ({ name, phone, email, requireVerification, referredBy }) => {
     const customerId = await createAccount({ name, phone, email, requireVerification, referredBy });
     await refreshCustomers();
@@ -333,6 +344,42 @@ export default function App() {
     await saveAccount(customerId, next);
     refreshCustomers();
     return next;
+  };
+
+  // For the customer updating their own profile (e.g. notification
+  // preferences) — no store-side customer-list refresh needed here, and a
+  // suspended/blacklisted customer should still be able to change this.
+  const applyToOwnAccount = async (customerId, updater) => {
+    const current = await getAccountOnce(customerId);
+    const next = updater(current);
+    await saveAccount(customerId, next);
+    return next;
+  };
+
+  const handleUpdateNotifyPrefs = async (customerId, prefs) => {
+    let pushToken = null;
+    if (prefs.push) {
+      pushToken = await requestPushToken();
+      if (!pushToken) {
+        // Permission denied, or the browser doesn't support push — keep the
+        // checkbox state the customer chose, but there's no token to save,
+        // so nothing will actually be deliverable until they allow it.
+      }
+    }
+    await applyToOwnAccount(customerId, (prev) => {
+      const existingTokens = prev.pushTokens || [];
+      const nextTokens =
+        prefs.push && pushToken && !existingTokens.includes(pushToken)
+          ? [...existingTokens, pushToken]
+          : existingTokens;
+      return { ...prev, notifyOptIn: prefs, pushTokens: nextTokens };
+    });
+  };
+
+  const handleSendPush = async (tokens, body) => {
+    if (!tokens || tokens.length === 0) return;
+    const title = storeSettings.storeName || "PicoPay";
+    await sendPushNotification({ tokens, title, body });
   };
 
   const computeDepositBonus = (amount) => {
@@ -418,6 +465,16 @@ export default function App() {
     }
   };
 
+  const computePurchasePoints = (amount) => {
+    if (!storeSettings.purchasePointEnabled) return 0;
+    if (storeSettings.purchasePointFlatMode) {
+      return Math.round(amount * ((storeSettings.purchasePointFlatRate || 0) / 100));
+    }
+    const tiers = storeSettings.purchasePointTiers || [];
+    const tier = tiers.find((t) => t.upTo === null || amount <= t.upTo) || tiers[tiers.length - 1];
+    return tier ? Math.round(amount * ((tier.rate || 0) / 100)) : 0;
+  };
+
   const handleDeduct = (amount, customerId) => {
     if (!customerId) return Promise.resolve();
     return applyToAccount(customerId, (prev) => {
@@ -426,22 +483,32 @@ export default function App() {
       remaining -= usedPoints;
       const usedDeposit = Math.min(prev.depositBalance || 0, remaining);
       const newDeposit = Math.max(0, (prev.depositBalance || 0) - remaining);
+      const earnedPoints = computePurchasePoints(amount);
       const items = [];
       if (usedPoints > 0) items.push({ label: "お会計(ポイント消費分)", amount: -usedPoints });
       if (usedDeposit > 0) items.push({ label: "お会計(預かり金消費分)", amount: -usedDeposit });
+      const history = [
+        {
+          date: "今日",
+          summary: `お会計 -¥${amount.toLocaleString()}`,
+          total: -amount,
+          items,
+        },
+        ...(prev.history || []),
+      ];
+      if (earnedPoints > 0) {
+        history.unshift({
+          date: "今日",
+          summary: "購入ポイント付与",
+          total: earnedPoints,
+          items: [{ label: "購入ポイント", amount: earnedPoints }],
+        });
+      }
       return {
         ...prev,
-        pointBalance: (prev.pointBalance || 0) - usedPoints,
+        pointBalance: (prev.pointBalance || 0) - usedPoints + earnedPoints,
         depositBalance: newDeposit,
-        history: [
-          {
-            date: "今日",
-            summary: `お会計 -¥${amount.toLocaleString()}`,
-            total: -amount,
-            items,
-          },
-          ...(prev.history || []),
-        ],
+        history,
       };
     });
   };
@@ -556,28 +623,20 @@ export default function App() {
               onCharge={handleCharge}
               onDeduct={handleDeduct}
               rankingEnabled={rankingEnabled}
-              setRankingEnabled={setRankingEnabled}
+              setRankingEnabled={handleSetRankingEnabled}
               weatherEnabled={weatherEnabled}
-              setWeatherEnabled={setWeatherEnabled}
+              setWeatherEnabled={handleSetWeatherEnabled}
               customers={customers}
               onRegisterCustomer={handleRegisterCustomer}
               onFetchCustomerDetail={getAccountOnce}
               onSetCustomerStatus={handleSetCustomerStatus}
               onDeleteCustomer={handleDeleteCustomer}
               onReissueCustomer={handleReissueCustomer}
-              lineUrl={storeSettings.lineUrl || ""}
               storeSettings={storeSettings}
               onSaveStoreSettings={handleSaveStoreSettings}
+              onSendPush={handleSendPush}
+              onSignOut={storeSignOut}
             />
-            <div className="max-w-md mx-auto px-4 pb-6">
-              <button
-                onClick={storeSignOut}
-                className="text-[11px] font-semibold"
-                style={{ color: C.mute }}
-              >
-                ログアウト({authUser.email})
-              </button>
-            </div>
           </>
         )
       ) : !myCustomerId ? (
@@ -638,6 +697,8 @@ export default function App() {
           rankingEnabled={rankingEnabled}
           customerId={myCustomerId}
           storeSettings={storeSettings}
+          notifyOptIn={account.notifyOptIn || null}
+          onUpdateNotifyPrefs={(prefs) => handleUpdateNotifyPrefs(myCustomerId, prefs)}
         />
       )}
     </div>
