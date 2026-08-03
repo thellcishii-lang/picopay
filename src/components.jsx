@@ -67,6 +67,51 @@ const BRANDING_SIZES = {
   heroHeight: 280, // px — recommended height for the customer-side hero banner
 };
 
+// ---- Initial (placeholder) brand images ----
+// Stores start out with these so the app never looks unbranded on day one.
+// They're plain SVG generated here rather than uploaded files, so they cost
+// nothing to ship and scale cleanly at any size.
+const svgUri = (svg) => `data:image/svg+xml,${encodeURIComponent(svg)}`;
+
+export const PICO_PLACEHOLDER = {
+  logo: svgUri(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="180" height="36" viewBox="0 0 180 36">
+      <rect width="180" height="36" rx="8" fill="#0E6E5C"/>
+      <circle cx="24" cy="18" r="7" fill="#FF7A59"/>
+      <text x="42" y="24" font-family="sans-serif" font-size="17" font-weight="bold" fill="#FFFFFF">PicoPay</text>
+    </svg>`
+  ),
+  icon: svgUri(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+      <rect width="200" height="200" rx="44" fill="#0E6E5C"/>
+      <circle cx="140" cy="62" r="18" fill="#FF7A59"/>
+      <text x="100" y="132" text-anchor="middle" font-family="sans-serif" font-size="96" font-weight="bold" fill="#FFFFFF">P</text>
+    </svg>`
+  ),
+  hero: svgUri(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="280" viewBox="0 0 800 280">
+      <rect width="800" height="280" fill="#FBF7F0"/>
+      <circle cx="700" cy="60" r="120" fill="#FFE4DA"/>
+      <circle cx="96" cy="140" r="34" fill="#FF7A59"/>
+      <text x="152" y="132" font-family="sans-serif" font-size="46" font-weight="bold" fill="#0E6E5C">PicoPay</text>
+      <text x="152" y="176" font-family="sans-serif" font-size="22" fill="#6B7A76">ピコッと払って、ポイントもピコッ!</text>
+    </svg>`
+  ),
+};
+
+// Brand images have three states, and they have to stay distinguishable:
+//   undefined / null → never touched, so show the placeholder
+//   ""               → the store deliberately deleted it, so show nothing
+//                      (and warn, since e.g. the home-screen icon goes missing)
+//   data URI         → the store's own image
+// Deletion is stored as "" rather than null because writing null to Firebase
+// removes the key entirely, which would read back as "never touched".
+export function resolveBrandImage(value, placeholder) {
+  if (value === "") return null;
+  return value || placeholder;
+}
+
+
 function GachaSettings({ storeSettings, onSave }) {
   const [gachaEnabled, setGachaEnabled] = useState(storeSettings.gachaEnabled ?? true);
   const [normalRows, setNormalRows] = useState(
@@ -2099,7 +2144,7 @@ function compressImage(file, maxDim, quality, onDone, onError) {
   reader.readAsDataURL(file);
 }
 
-function ImageUploadButton({ id, label, currentImage, onImageReady, maxDim = 800 }) {
+function ImageUploadButton({ id, label, currentImage, onImageReady, onDelete, isDeleted, maxDim = 800 }) {
   const [error, setError] = useState(null);
   return (
     <div>
@@ -2129,6 +2174,15 @@ function ImageUploadButton({ id, label, currentImage, onImageReady, maxDim = 800
           {currentImage ? `✓ ${label}(変更する)` : label}
         </span>
       </label>
+      {onDelete && !isDeleted && (
+        <button
+          onClick={onDelete}
+          className="mt-1 block w-full text-center rounded-lg py-1.5 text-[10px] font-semibold"
+          style={{ background: C.cream, color: C.mute }}
+        >
+          画像を削除する
+        </button>
+      )}
       {error && <div className="mt-1 text-[10px]" style={{ color: C.coral }}>{error}</div>}
     </div>
   );
@@ -2219,13 +2273,15 @@ function ReferralSettings({ storeSettings, onSave }) {
 
 function StoreBrandingSettings({ storeSettings, onSave }) {
   const [brandMode, setBrandMode] = useState(storeSettings.brandMode || "default");
-  const [logoImage, setLogoImage] = useState(storeSettings.logoImage || null);
-  const [iconImage, setIconImage] = useState(storeSettings.iconImage || null);
+  // These hold the *stored* value (null = untouched, "" = deleted), not what
+  // gets displayed — see resolveBrandImage above.
+  const [logoImage, setLogoImage] = useState(storeSettings.logoImage ?? null);
+  const [iconImage, setIconImage] = useState(storeSettings.iconImage ?? null);
   const [iconShape, setIconShape] = useState(storeSettings.iconShape || "circle");
   const [storeName, setStoreName] = useState(storeSettings.storeName || "");
   const [storeNameFont, setStoreNameFont] = useState(storeSettings.storeNameFont || "gothic");
   const [storeNameWeight, setStoreNameWeight] = useState(storeSettings.storeNameWeight || "normal");
-  const [heroImage, setHeroImage] = useState(storeSettings.heroImage || null);
+  const [heroImage, setHeroImage] = useState(storeSettings.heroImage ?? null);
   const [showHeroOnCustomer, setShowHeroOnCustomer] = useState(storeSettings.showHeroOnCustomer || false);
   const [saved, setSaved] = useState(false);
 
@@ -2245,8 +2301,18 @@ function StoreBrandingSettings({ storeSettings, onSave }) {
     setTimeout(() => setSaved(false), 2000);
   };
 
+  const shownLogo = resolveBrandImage(logoImage, PICO_PLACEHOLDER.logo);
+  const shownIcon = resolveBrandImage(iconImage, PICO_PLACEHOLDER.icon);
+  const shownHero = resolveBrandImage(heroImage, PICO_PLACEHOLDER.hero);
+
+  // In "default" mode the header shows PicoPay's own branding, so the
+  // home-screen icon is covered too — no warning is warranted there.
   const appIconSource =
-    brandMode === "iconName" && iconImage ? iconImage : brandMode === "logo" && logoImage ? logoImage : null;
+    brandMode === "iconName"
+      ? shownIcon
+      : brandMode === "logo"
+      ? shownLogo
+      : PICO_PLACEHOLDER.icon;
 
   return (
     <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
@@ -2302,15 +2368,17 @@ function StoreBrandingSettings({ storeSettings, onSave }) {
             <ImageUploadButton
               id="branding-logo"
               label="ロゴ画像をアップロード"
-              currentImage={logoImage}
+              currentImage={shownLogo}
               onImageReady={setLogoImage}
+              onDelete={() => setLogoImage("")}
+              isDeleted={logoImage === ""}
               maxDim={BRANDING_SIZES.logoWidth * 3}
             />
           </div>
-          {logoImage && (
+          {shownLogo && (
             <div className="mt-2 flex justify-center rounded-lg p-3" style={{ background: C.cream }}>
               <img
-                src={logoImage}
+                src={shownLogo}
                 alt="ロゴプレビュー"
                 style={{ height: BRANDING_SIZES.logoHeight, maxWidth: BRANDING_SIZES.logoWidth, objectFit: "contain" }}
               />
@@ -2347,8 +2415,10 @@ function StoreBrandingSettings({ storeSettings, onSave }) {
           <ImageUploadButton
             id="branding-icon"
             label="アイコン画像をアップロード"
-            currentImage={iconImage}
+            currentImage={shownIcon}
             onImageReady={setIconImage}
+            onDelete={() => setIconImage("")}
+            isDeleted={iconImage === ""}
             maxDim={BRANDING_SIZES.iconSize}
           />
 
@@ -2402,13 +2472,13 @@ function StoreBrandingSettings({ storeSettings, onSave }) {
             ))}
           </div>
 
-          {iconImage && storeName && (
+          {shownIcon && storeName && (
             <div className="flex items-center gap-2 rounded-lg p-3" style={{ background: C.cream }}>
               <div
                 className="h-9 w-9 overflow-hidden shrink-0"
                 style={{ borderRadius: iconShape === "square" ? 10 : 9999 }}
               >
-                <img src={iconImage} alt="preview" className="h-9 w-9 object-cover" />
+                <img src={shownIcon} alt="preview" className="h-9 w-9 object-cover" />
               </div>
               <div
                 className="text-[15px]"
@@ -2434,13 +2504,15 @@ function StoreBrandingSettings({ storeSettings, onSave }) {
           <ImageUploadButton
             id="branding-hero"
             label="ヒーロー画像をアップロード"
-            currentImage={heroImage}
+            currentImage={shownHero}
             onImageReady={setHeroImage}
+            onDelete={() => setHeroImage("")}
+            isDeleted={heroImage === ""}
             maxDim={BRANDING_SIZES.heroWidth}
           />
         </div>
-        {heroImage && (
-          <img src={heroImage} alt="ヒーロープレビュー" className="mt-2 w-full rounded-lg" />
+        {shownHero && (
+          <img src={shownHero} alt="ヒーロープレビュー" className="mt-2 w-full rounded-lg" />
         )}
         <label className="mt-2 flex items-center justify-between text-[12px]" style={{ color: C.ink }}>
           <span>お客様画面にこの画像を表示する</span>
@@ -2463,7 +2535,51 @@ function StoreBrandingSettings({ storeSettings, onSave }) {
   );
 }
 
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, storeSettings = {}, onSaveStoreSettings, onSendPush }) {
+// ---------------- SIGN OUT ----------------
+// Lives at the very bottom of the settings tab rather than floating on every
+// screen — signing out is rare, and having it always visible invited misclicks.
+function SignOutButton({ onSignOut }) {
+  const [confirming, setConfirming] = useState(false);
+
+  if (confirming) {
+    return (
+      <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+        <div className="text-sm font-bold" style={{ color: C.ink }}>ログアウトしますか?</div>
+        <div className="text-[11px] mt-1" style={{ color: C.mute }}>
+          次に使う時は、メールアドレスとパスワードでのログインが必要になります
+        </div>
+        <div className="mt-3 flex gap-2">
+          <button
+            onClick={() => setConfirming(false)}
+            className="flex-1 rounded-full py-2.5 text-sm font-bold"
+            style={{ background: C.cream, color: C.mute }}
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={onSignOut}
+            className="flex-1 rounded-full py-2.5 text-sm font-bold"
+            style={{ background: C.coral, color: "#fff" }}
+          >
+            ログアウト
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={() => setConfirming(true)}
+      className="mt-4 w-full rounded-2xl py-3 text-sm font-bold"
+      style={{ background: C.paper, border: `1px solid ${C.line}`, color: C.mute }}
+    >
+      ログアウト
+    </button>
+  );
+}
+
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, storeSettings = {}, onSaveStoreSettings, onSendPush, onSignOut }) {
   const [tab, setTab] = useState("dashboard");
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
@@ -2680,6 +2796,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
           <SystemSafetySettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <WeatherCampaignSettings weatherEnabled={weatherEnabled} setWeatherEnabled={setWeatherEnabled} storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <StoreBrandingSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+          <SignOutButton onSignOut={onSignOut} />
         </>
       )}
 
@@ -2776,10 +2893,10 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
   return (
     <div className="max-w-md mx-auto px-4 pb-10">
       {/* Store hero image — configured by the store, customer can't toggle it */}
-      {storeSettings.showHeroOnCustomer && storeSettings.heroImage && (
+      {storeSettings.showHeroOnCustomer && resolveBrandImage(storeSettings.heroImage, PICO_PLACEHOLDER.hero) && (
         <div className="mt-4 rounded-2xl overflow-hidden">
           <img
-            src={storeSettings.heroImage}
+            src={resolveBrandImage(storeSettings.heroImage, PICO_PLACEHOLDER.hero)}
             alt="お店の画像"
             style={{ width: "100%", aspectRatio: `${BRANDING_SIZES.heroWidth} / ${BRANDING_SIZES.heroHeight}`, objectFit: "cover" }}
           />
