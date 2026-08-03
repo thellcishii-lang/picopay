@@ -18,6 +18,16 @@
         }
       }
     },
+    "idPhotos": {
+      "$customerId": {
+        ".read": "auth != null && auth.token.email != null",
+        ".write": "auth != null && auth.token.email != null"
+      }
+    },
+    "storeSettings": {
+      ".read": true,
+      ".write": "auth != null && auth.token.email != null"
+    },
     "$other": {
       ".read": false,
       ".write": false
