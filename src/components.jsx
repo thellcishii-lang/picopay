@@ -2179,8 +2179,7 @@ function BroadcastPanel({ customers, storeSettings, onSave, onSendPush, storeSec
           </div>
         )}
 
-        {lineApiKey && (
-          <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
+        <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
             <div className="text-[11px] font-semibold" style={{ color: C.ink }}>
               お客様とLINEアカウントの紐付け(LINEログイン連携)
             </div>
@@ -2225,8 +2224,7 @@ function BroadcastPanel({ customers, storeSettings, onSave, onSendPush, storeSec
                 </button>
               </div>
             )}
-          </div>
-        )}
+        </div>
       </div>
 
       {lineApiKey && (
