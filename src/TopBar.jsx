@@ -1,5 +1,5 @@
 import React from "react";
-import { C, PICO, BRANDING_SIZES } from "./components.jsx";
+import { C, PICO, BRANDING_SIZES, PICO_PLACEHOLDER, resolveBrandImage } from "./components.jsx";
 
 export default function ModeTopBar({ mode, storeSettings = {} }) {
   const brandMode = storeSettings.brandMode || "default";
@@ -8,17 +8,19 @@ export default function ModeTopBar({ mode, storeSettings = {} }) {
       ? "'Hiragino Mincho ProN', serif"
       : "'Hiragino Sans', sans-serif";
   const fontWeight = storeSettings.storeNameWeight === "bold" ? 700 : 500;
+  const logo = resolveBrandImage(storeSettings.logoImage, PICO_PLACEHOLDER.logo);
+  const icon = resolveBrandImage(storeSettings.iconImage, PICO_PLACEHOLDER.icon);
 
   return (
     <div className="sticky top-0 z-10" style={{ background: C.paper, borderBottom: `1px solid ${C.line}` }}>
       <div className="max-w-md mx-auto px-4 pt-4 pb-3 flex items-center gap-2">
-        {brandMode === "logo" && storeSettings.logoImage ? (
+        {brandMode === "logo" && logo ? (
           <img
-            src={storeSettings.logoImage}
+            src={logo}
             alt="店舗ロゴ"
             style={{ height: BRANDING_SIZES.logoHeight, maxWidth: BRANDING_SIZES.logoWidth, objectFit: "contain" }}
           />
-        ) : brandMode === "iconName" && storeSettings.iconImage && storeSettings.storeName ? (
+        ) : brandMode === "iconName" && icon && storeSettings.storeName ? (
           <>
             <div
               className="h-9 w-9 overflow-hidden shrink-0"
@@ -27,7 +29,7 @@ export default function ModeTopBar({ mode, storeSettings = {} }) {
                 background: C.coralSoft,
               }}
             >
-              <img src={storeSettings.iconImage} alt={storeSettings.storeName} className="h-9 w-9 object-cover" />
+              <img src={icon} alt={storeSettings.storeName} className="h-9 w-9 object-cover" />
             </div>
             <div
               className="text-[15px] leading-none"
