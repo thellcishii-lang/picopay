@@ -11,6 +11,7 @@ import {
   TrendingUp,
   Gift,
   ChevronRight,
+  ChevronLeft,
   Plus,
   Sparkles,
   ShieldCheck,
@@ -1792,15 +1793,60 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
 
       {showLineQrModal && (
         <div
-          className="fixed inset-0 z-50 flex flex-col items-center justify-center px-6"
+          className="fixed inset-0 z-50 flex flex-col px-6 py-6"
           style={{ background: "#06C755" }}
-          onClick={() => setShowLineQrModal(false)}
         >
-          <div className="text-white text-sm font-bold mb-4">友だち追加はこちらから</div>
-          <div className="rounded-2xl bg-white p-6">
-            <QRCodeSVG value={lineUrl} size={220} level="M" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {storeSettings.brandMode === "logo" && storeSettings.logoImage ? (
+                <img
+                  src={storeSettings.logoImage}
+                  alt="店舗ロゴ"
+                  style={{ height: BRANDING_SIZES.logoHeight, maxWidth: BRANDING_SIZES.logoWidth, objectFit: "contain" }}
+                />
+              ) : storeSettings.brandMode === "iconName" && storeSettings.iconImage && storeSettings.storeName ? (
+                <>
+                  <div
+                    className="h-9 w-9 overflow-hidden shrink-0"
+                    style={{ borderRadius: storeSettings.iconShape === "square" ? 10 : 9999 }}
+                  >
+                    <img src={storeSettings.iconImage} alt={storeSettings.storeName} className="h-9 w-9 object-cover" />
+                  </div>
+                  <div
+                    className="text-[15px] leading-none"
+                    style={{
+                      color: "#fff",
+                      fontFamily: storeSettings.storeNameFont === "mincho" ? "'Hiragino Mincho ProN', serif" : "'Hiragino Sans', sans-serif",
+                      fontWeight: storeSettings.storeNameWeight === "bold" ? 700 : 500,
+                    }}
+                  >
+                    {storeSettings.storeName}
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <div className="h-9 w-9 rounded-full overflow-hidden bg-white/20 flex items-center justify-center">
+                    <img src={PICO.logo} alt="ピコ" className="h-9 w-9 object-cover scale-125" />
+                  </div>
+                  <div className="text-[15px] font-bold text-white">PicoPay</div>
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => setShowLineQrModal(false)}
+              className="rounded-full px-4 py-2 text-xs font-semibold flex items-center gap-1"
+              style={{ background: "rgba(255,255,255,0.2)", color: "#fff" }}
+            >
+              <ChevronLeft size={14} /> 概況に戻る
+            </button>
           </div>
-          <div className="text-white text-[11px] mt-4">画面のどこかをタップで閉じます</div>
+
+          <div className="flex-1 flex flex-col items-center justify-center">
+            <div className="text-white text-sm font-bold mb-4">友だち追加はこちらから</div>
+            <div className="rounded-2xl bg-white p-6">
+              <QRCodeSVG value={lineUrl} size={220} level="M" />
+            </div>
+          </div>
         </div>
       )}
 
