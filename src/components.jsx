@@ -652,16 +652,22 @@ function ChargeScreen({ onCharge, onDeduct }) {
     if (m === "charge") setAmount(10000);
   };
 
-  const complete = (customerId) => {
+  const complete = async (customerId) => {
     if (scannerRef.current) {
       scannerRef.current.stop().catch(() => {});
       scannerRef.current = null;
     }
-    if (screenMode === "charge") onCharge(Number(amount), customerId);
-    else onDeduct(Number(amount), customerId);
-    setScannedName(customerId);
-    setScanning(false);
-    setDone(true);
+    setScanning(true);
+    try {
+      if (screenMode === "charge") await onCharge(Number(amount), customerId);
+      else await onDeduct(Number(amount), customerId);
+      setScannedName(customerId);
+      setScanning(false);
+      setDone(true);
+    } catch (e) {
+      setScanning(false);
+      setScanError(e?.message || "処理に失敗しました");
+    }
   };
 
   const handleDecodedText = (text) => {
@@ -1081,9 +1087,19 @@ function exportCustomersCsv(customers) {
   URL.revokeObjectURL(url);
 }
 
-function CustomerDetailPanel({ customerId, onFetch }) {
+function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermanently, onDeleted }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    onFetch(customerId).then((data) => {
+      setDetail(data);
+      setLoading(false);
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -1101,6 +1117,27 @@ function CustomerDetailPanel({ customerId, onFetch }) {
 
   const printPanel = () => window.print();
 
+  const changeStatus = async (status) => {
+    setBusy(true);
+    try {
+      await onSetStatus(customerId, status);
+      load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmedDelete = async () => {
+    setBusy(true);
+    try {
+      await onDeletePermanently(customerId);
+      setConfirmDelete(false);
+      onDeleted && onDeleted();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="px-3 py-4 text-[12px]" style={{ background: C.cream, color: C.mute }}>
@@ -1108,6 +1145,10 @@ function CustomerDetailPanel({ customerId, onFetch }) {
       </div>
     );
   }
+
+  const status = detail?.status || "active";
+  const statusLabel = { active: "有効", blacklisted: "ブラックリスト", suspended: "一時停止" }[status];
+  const statusColor = { active: C.teal, blacklisted: C.coral, suspended: "#C9A227" }[status];
 
   return (
     <div className="px-3 py-4" style={{ background: C.cream }} id={`print-customer-${customerId}`}>
@@ -1121,6 +1162,14 @@ function CustomerDetailPanel({ customerId, onFetch }) {
           >
             PDFで保存/印刷
           </button>
+        </div>
+        <div className="mt-1 no-print">
+          <span
+            className="text-[10px] font-semibold rounded-full px-2 py-0.5"
+            style={{ background: status === "active" ? C.coralSoft : "#fff", color: statusColor, border: status === "active" ? "none" : `1px solid ${statusColor}` }}
+          >
+            {statusLabel}
+          </span>
         </div>
         <div className="mt-2 grid grid-cols-2 gap-2 text-[12px]" style={{ color: C.ink }}>
           <div>お客様ID: {customerId}</div>
@@ -1149,12 +1198,82 @@ function CustomerDetailPanel({ customerId, onFetch }) {
             </div>
           ))}
         </div>
+
+        {/* Status / deletion controls */}
+        <div className="mt-3 no-print">
+          <div className="text-[11px] font-semibold" style={{ color: C.ink }}>お客様の管理</div>
+          <div className="mt-1 grid grid-cols-3 gap-2">
+            <button
+              onClick={() => changeStatus(status === "blacklisted" ? "active" : "blacklisted")}
+              disabled={busy}
+              className="rounded-lg py-2 text-[11px] font-semibold"
+              style={
+                status === "blacklisted"
+                  ? { background: C.coral, color: "#fff" }
+                  : { background: C.paper, color: C.ink, border: `1px solid ${C.line}` }
+              }
+            >
+              {status === "blacklisted" ? "解除する" : "ブラックリスト"}
+            </button>
+            <button
+              onClick={() => changeStatus(status === "suspended" ? "active" : "suspended")}
+              disabled={busy}
+              className="rounded-lg py-2 text-[11px] font-semibold"
+              style={
+                status === "suspended"
+                  ? { background: "#C9A227", color: "#fff" }
+                  : { background: C.paper, color: C.ink, border: `1px solid ${C.line}` }
+              }
+            >
+              {status === "suspended" ? "解除する" : "一時停止"}
+            </button>
+            <button
+              onClick={() => setConfirmDelete(true)}
+              disabled={busy}
+              className="rounded-lg py-2 text-[11px] font-semibold"
+              style={{ background: C.paper, color: C.coral, border: `1px solid ${C.coral}` }}
+            >
+              完全削除
+            </button>
+          </div>
+        </div>
+
+        {confirmDelete && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center px-6 no-print"
+            style={{ background: "rgba(0,0,0,0.4)" }}
+          >
+            <div className="rounded-2xl p-4 w-full max-w-xs" style={{ background: "#fff" }}>
+              <div className="text-sm font-bold" style={{ color: C.ink }}>本当によろしいですか?</div>
+              <div className="text-[12px] mt-2" style={{ color: C.mute }}>
+                {detail?.profile?.name}様のデータを完全に削除します。この操作は取り消せません。
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setConfirmDelete(false)}
+                  className="rounded-full py-2 text-sm font-semibold"
+                  style={{ background: C.cream, color: C.ink }}
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={confirmedDelete}
+                  disabled={busy}
+                  className="rounded-full py-2 text-sm font-bold"
+                  style={{ background: C.coral, color: "#fff", opacity: busy ? 0.6 : 1 }}
+                >
+                  {busy ? "削除中…" : "完全削除"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail }) {
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer }) {
   const [tab, setTab] = useState("dashboard");
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
@@ -1339,7 +1458,13 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
                   </div>
                 </button>
                 {expandedId === c.id && (
-                  <CustomerDetailPanel customerId={c.id} onFetch={onFetchCustomerDetail} />
+                  <CustomerDetailPanel
+                    customerId={c.id}
+                    onFetch={onFetchCustomerDetail}
+                    onSetStatus={onSetCustomerStatus}
+                    onDeletePermanently={onDeleteCustomer}
+                    onDeleted={() => setExpandedId(null)}
+                  />
                 )}
               </React.Fragment>
               ));
