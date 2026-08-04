@@ -3678,9 +3678,9 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
       </div>
       <div className="mt-2 rounded-xl overflow-hidden" style={{ border: `1px solid ${C.line}` }}>
         {history.map((day, i) => (
-          <div key={day.date} style={{ borderTop: i === 0 ? "none" : `1px solid ${C.line}` }}>
+          <div key={day.id || i} style={{ borderTop: i === 0 ? "none" : `1px solid ${C.line}` }}>
             <button
-              onClick={() => setOpenDate(openDate === day.date ? null : day.date)}
+              onClick={() => setOpenDate(openDate === (day.id || i) ? null : day.id || i)}
               className="w-full flex items-center justify-between px-3 py-2.5"
               style={{ background: C.paper }}
             >
@@ -3695,11 +3695,11 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
                 </div>
                 <ChevronRight
                   size={14}
-                  style={{ color: C.mute, transform: openDate === day.date ? "rotate(90deg)" : "none", transition: "transform .15s" }}
+                  style={{ color: C.mute, transform: openDate === (day.id || i) ? "rotate(90deg)" : "none", transition: "transform .15s" }}
                 />
               </div>
             </button>
-            {openDate === day.date && (
+            {openDate === (day.id || i) && (
               <div className="px-3 pb-3" style={{ background: C.cream }}>
                 {day.items.map((it, j) => (
                   <div key={j} className="flex items-center justify-between py-1.5 text-xs" style={{ color: C.mute }}>
