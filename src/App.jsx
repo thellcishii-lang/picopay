@@ -18,6 +18,7 @@ import {
   recordStats,
   getStats,
   ensureStatsStarted,
+  listTransactions,
   DEFAULT_ACCOUNT,
   auth,
   subscribeToAuth,
@@ -424,6 +425,8 @@ export default function App() {
           date: "今日",
           ts: Date.now(),
           summary: `チャージ ¥${amount.toLocaleString()}`,
+          kind: "charge",
+          cash: amount,
           total: amount,
           items: [{ label: "チャージ", amount }],
         },
@@ -434,6 +437,8 @@ export default function App() {
           date: "今日",
           ts: Date.now(),
           summary: "入金ボーナス",
+          kind: "point",
+          point: depositBonus,
           total: depositBonus,
           items: [{ label: "入金ボーナス", amount: depositBonus }],
         });
@@ -443,6 +448,8 @@ export default function App() {
           date: "今日",
           ts: Date.now(),
           summary: `お友達紹介ボーナス+${storeSettings.referralRefereeRate}%`,
+          kind: "point",
+          point: refereeBonus,
           total: refereeBonus,
           items: [{ label: "お友達紹介ボーナス(紹介された方)", amount: refereeBonus }],
         });
@@ -474,6 +481,8 @@ export default function App() {
                 date: "今日",
                 ts: Date.now(),
                 summary: `お友達紹介ボーナス+${storeSettings.referralReferrerRate}%`,
+                kind: "point",
+                point: referrerBonus,
                 total: referrerBonus,
                 items: [{ label: "お友達紹介ボーナス(紹介した方)", amount: referrerBonus }],
               },
@@ -522,6 +531,11 @@ export default function App() {
           date: "今日",
           ts: Date.now(),
           summary: `お会計 -¥${amount.toLocaleString()}`,
+          kind: "payment",
+          gross: amount,
+          depositUsed: usedDeposit,
+          pointUsed: usedPoints,
+          earned: earnedPoints,
           total: -amount,
           items,
         },
@@ -532,6 +546,8 @@ export default function App() {
           date: "今日",
           ts: Date.now(),
           summary: "購入ポイント付与",
+          kind: "purchasePoint",
+          point: earnedPoints,
           total: earnedPoints,
           items: [{ label: "購入ポイント", amount: earnedPoints }],
         });
@@ -621,6 +637,8 @@ export default function App() {
             date: "今日",
             ts: Date.now(),
             summary: `ガチャボーナス+${rate}%`,
+            kind: "point",
+            point: bonus,
             total: bonus,
             items: [{ label: `ガチャボーナス(${rate}%)`, amount: bonus }],
           },
@@ -675,6 +693,7 @@ export default function App() {
               onSendPush={handleSendPush}
               onSignOut={storeSignOut}
               stats={stats}
+              onLoadTransactions={listTransactions}
             />
           </>
         )
