@@ -3,6 +3,9 @@ import ModeTopBar from "./TopBar.jsx";
 import { C, StoreView, CustomerView, PICO_PLACEHOLDER, resolveBrandImage, clampRate } from "./components.jsx";
 import {
   subscribeToAccount,
+  subscribeToAccountTransactions,
+  listAccountTransactions,
+  appendTransactions,
   getAccountOnce,
   getAccountVerificationInfo,
   saveAccount,
@@ -427,6 +430,7 @@ export default function App() {
     let issuedDeposit = 0;
     let issuedReferral = 0;
     let weatherUsed = false;
+    const entries = [];
     const result = await applyToAccount(customerId, (prev) => {
       // If this customer was referred and hasn't received their referral
       // bonus yet, this first charge is what triggers both bonuses.
@@ -458,20 +462,17 @@ export default function App() {
         }
         if (depositBonus > 0) daily.depositCount = (daily.depositCount || 0) + 1;
       }
-      const history = [
-        {
-          date: "今日",
-          ts: Date.now(),
-          summary: `チャージ ¥${amount.toLocaleString()}`,
-          kind: "charge",
-          cash: amount,
-          total: amount,
-          items: [{ label: "チャージ", amount }],
-        },
-        ...(prev.history || []),
-      ];
+      entries.push({
+        date: "今日",
+        ts: Date.now(),
+        summary: `チャージ ¥${amount.toLocaleString()}`,
+        kind: "charge",
+        cash: amount,
+        total: amount,
+        items: [{ label: "チャージ", amount }],
+      });
       if (depositBonus > 0) {
-        history.unshift({
+        entries.push({
           date: "今日",
           ts: Date.now(),
           summary: bonusLabel,
@@ -483,7 +484,7 @@ export default function App() {
         });
       }
       if (refereeBonus > 0) {
-        history.unshift({
+        entries.push({
           date: "今日",
           ts: Date.now(),
           summary: `お友達紹介ボーナス+${storeSettings.referralRefereeRate}%`,
@@ -505,9 +506,9 @@ export default function App() {
         pointBalance: (prev.pointBalance || 0) + refereeBonus + depositBonus,
         bonusEligible: storeSettings.gachaEnabled !== false && amount >= 10000 ? true : prev.bonusEligible,
         referralBonusGiven: giveReferralBonus ? true : prev.referralBonusGiven,
-        history,
       };
     });
+    await appendTransactions(customerId, entries);
 
     await recordStats({
       cash: amount,
@@ -526,20 +527,19 @@ export default function App() {
           await applyToAccount(result.referredBy, (prev) => ({
             ...prev,
             pointBalance: (prev.pointBalance || 0) + referrerBonus,
-            history: [
-              {
-                date: "今日",
-                ts: Date.now(),
-                summary: `お友達紹介ボーナス+${storeSettings.referralReferrerRate}%`,
-                kind: "point",
-                category: "referral",
-                point: referrerBonus,
-                total: referrerBonus,
-                items: [{ label: "お友達紹介ボーナス(紹介した方)", amount: referrerBonus }],
-              },
-                ...(prev.history || []),
-            ],
           }));
+          await appendTransactions(result.referredBy, [
+            {
+              date: "今日",
+              ts: Date.now(),
+              summary: `お友達紹介ボーナス+${storeSettings.referralReferrerRate}%`,
+              kind: "point",
+              category: "referral",
+              point: referrerBonus,
+              total: referrerBonus,
+              items: [{ label: "お友達紹介ボーナス(紹介した方)", amount: referrerBonus }],
+            },
+          ]);
           await recordStats({ points: { referral: referrerBonus } });
         } catch (e) {
           // If the referrer's account is blacklisted/suspended/deleted, just
@@ -562,6 +562,7 @@ export default function App() {
   const handleDeduct = async (amount, customerId) => {
     if (!customerId) return;
     let issuedPoints = 0;
+    const entries = [];
     const result = await applyToAccount(customerId, (prev) => {
       let remaining = amount;
       const usedPoints = Math.min(prev.pointBalance || 0, remaining);
@@ -577,23 +578,20 @@ export default function App() {
       const items = [];
       if (usedPoints > 0) items.push({ label: "お会計(ポイント消費分)", amount: -usedPoints });
       if (usedDeposit > 0) items.push({ label: "お会計(預かり金消費分)", amount: -usedDeposit });
-      const history = [
-        {
-          date: "今日",
-          ts: Date.now(),
-          summary: `お会計 -¥${amount.toLocaleString()}`,
-          kind: "payment",
-          gross: amount,
-          depositUsed: usedDeposit,
-          pointUsed: usedPoints,
-          earned: earnedPoints,
-          total: -amount,
-          items,
-        },
-        ...(prev.history || []),
-      ];
+      entries.push({
+        date: "今日",
+        ts: Date.now(),
+        summary: `お会計 -¥${amount.toLocaleString()}`,
+        kind: "payment",
+        gross: amount,
+        depositUsed: usedDeposit,
+        pointUsed: usedPoints,
+        earned: earnedPoints,
+        total: -amount,
+        items,
+      });
       if (earnedPoints > 0) {
-        history.unshift({
+        entries.push({
           date: "今日",
           ts: Date.now(),
           summary: "購入ポイント付与",
@@ -608,9 +606,9 @@ export default function App() {
         ...prev,
         pointBalance: (prev.pointBalance || 0) - usedPoints + earnedPoints,
         depositBalance: newDeposit,
-        history,
       };
     });
+    await appendTransactions(customerId, entries);
     await recordStats({ points: { purchase: issuedPoints } });
     return result;
   };
@@ -631,6 +629,13 @@ export default function App() {
   const [setupInput, setSetupInput] = useState("");
   const [account, setAccount] = useState(DEFAULT_ACCOUNT);
   const [accountLoaded, setAccountLoaded] = useState(false);
+  // The customer's own history, subscribed separately from the account and
+  // capped at the most recent 50 — the account itself no longer carries it.
+  const [myTransactions, setMyTransactions] = useState([]);
+  useEffect(() => {
+    if (!myCustomerId) return;
+    return subscribeToAccountTransactions(myCustomerId, setMyTransactions, 50);
+  }, [myCustomerId]);
   // The phone number on file for this account, and whether verification is
   // required at all — fetched via a public, read-only lookup so we can
   // decide whether the gate is needed *before* the customer is
@@ -677,6 +682,7 @@ export default function App() {
   const handleUseBonusSpin = async (rate) => {
     if (!myCustomerId) return;
     let issuedPoints = 0;
+    const entries = [];
     await applyToAccount(myCustomerId, (prev) => {
       const today = dayKey();
       const daily =
@@ -691,26 +697,24 @@ export default function App() {
       daily.gachaCount = (daily.gachaCount || 0) + 1;
       const bonus = Math.round((prev.depositBalance || 0) * (clampRate(rate) / 100));
       issuedPoints = bonus;
+      entries.push({
+        date: "今日",
+        ts: Date.now(),
+        summary: `ガチャボーナス+${rate}%`,
+        kind: "point",
+        category: "gacha",
+        point: bonus,
+        total: bonus,
+        items: [{ label: `ガチャボーナス(${rate}%)`, amount: bonus }],
+      });
       return {
         ...prev,
         pointBalance: (prev.pointBalance || 0) + bonus,
         bonusEligible: false,
         dailyBonus: daily,
-        history: [
-          {
-            date: "今日",
-            ts: Date.now(),
-            summary: `ガチャボーナス+${rate}%`,
-            kind: "point",
-            category: "gacha",
-            point: bonus,
-            total: bonus,
-            items: [{ label: `ガチャボーナス(${rate}%)`, amount: bonus }],
-          },
-          ...(prev.history || []),
-        ],
       };
     });
+    await appendTransactions(myCustomerId, entries);
     await recordStats({ points: { gacha: issuedPoints } });
   };
 
@@ -749,7 +753,13 @@ export default function App() {
               setWeatherEnabled={handleSetWeatherEnabled}
               customers={customers}
               onRegisterCustomer={handleRegisterCustomer}
-              onFetchCustomerDetail={getAccountOnce}
+              onFetchCustomerDetail={async (id) => {
+                const [acc, history] = await Promise.all([
+                  getAccountOnce(id),
+                  listAccountTransactions(id, 50),
+                ]);
+                return { ...acc, history };
+              }}
               onSetCustomerStatus={handleSetCustomerStatus}
               onDeleteCustomer={handleDeleteCustomer}
               onReissueCustomer={handleReissueCustomer}
@@ -818,7 +828,7 @@ export default function App() {
           depositBalance={account.depositBalance || 0}
           bonusEligible={account.bonusEligible || false}
           onUseBonusSpin={handleUseBonusSpin}
-          history={account.history || []}
+          history={myTransactions}
           rankingEnabled={rankingEnabled}
           customerId={myCustomerId}
           storeSettings={storeSettings}
