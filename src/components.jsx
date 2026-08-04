@@ -723,11 +723,11 @@ function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled, storeSetti
   const [areaChoices, setAreaChoices] = useState([]);
   const [looking, setLooking] = useState(false);
   const [lookupError, setLookupError] = useState(null);
-  const [rainThreshold, setRainThreshold] = useState(storeSettings.weatherRainThreshold ?? 60);
+  const [rainThreshold, setRainThreshold] = useState(storeSettings.weatherRainThreshold ?? 80);
   const [autoMode, setAutoMode] = useState(storeSettings.weatherAutoMode || "confirm"); // "confirm" | "auto"
   const [sendHour, setSendHour] = useState(storeSettings.weatherSendHour ?? 10);
   const [rate, setRate] = useState(storeSettings.weatherRate ?? 10);
-  const [cap, setCap] = useState(storeSettings.weatherCap ?? 50000);
+  const [cap, setCap] = useState(storeSettings.weatherCap ?? 10000);
   const [saved, setSaved] = useState(false);
 
   // Resolving the postal code happens once, here — not every morning. The
@@ -3187,7 +3187,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
   // case the card falls back to the plain wording.
   const popToday = weather.date === todayKey && weather.currentPop != null ? weather.currentPop : null;
   const rainLikelyToday =
-    popToday !== null && popToday >= Number(storeSettings.weatherRainThreshold ?? 60);
+    popToday !== null && popToday >= Number(storeSettings.weatherRainThreshold ?? 80);
 
   // Turning the campaign on and announcing it are one action: a bonus nobody
   // heard about is pointless, and an announcement without the bonus behind it
@@ -3198,7 +3198,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
       await onSaveStoreSettings({ weatherActiveDate: todayKey });
       const tokens = customers.flatMap((c) => c.pushTokens || []);
       if (tokens.length > 0) {
-        const cap = (storeSettings.weatherCap ?? 50000).toLocaleString();
+        const cap = (storeSettings.weatherCap ?? 10000).toLocaleString();
         const rate = clampRate(storeSettings.weatherRate ?? 10);
         await onSendPush(tokens, `今日は雨の日ボーナス☔ ¥${cap}までのチャージで${rate}%還元!`);
         setRainSent(true);
@@ -3307,7 +3307,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
                 </div>
               )}
               <div className="text-[11px] mt-1" style={{ color: C.mute }}>
-                ¥{(storeSettings.weatherCap ?? 50000).toLocaleString()}まで
+                ¥{(storeSettings.weatherCap ?? 10000).toLocaleString()}まで
                 {clampRate(storeSettings.weatherRate ?? 10)}%ボーナス・プッシュ通知で一斉配信
               </div>
               <div className="text-[10px] mt-1" style={{ color: C.mute }}>
