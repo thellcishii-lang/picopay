@@ -2,3 +2,9 @@
   command = "npm run build"
   publish = "dist"
   functions = "netlify/functions"
+
+# 基準日(3/31・9/30)の残高を記録する定期実行。
+# Netlify は UTC なので 15:00 UTC = 翌 00:00 JST。毎日起動して、
+# 前日が基準日だった時だけ記録する。
+[functions."snapshot"]
+  schedule = "0 15 * * *"
