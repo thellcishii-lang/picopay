@@ -71,6 +71,14 @@ const BRANDING_SIZES = {
 // Stores start out with these so the app never looks unbranded on day one.
 // They're plain SVG generated here rather than uploaded files, so they cost
 // nothing to ship and scale cleanly at any size.
+// Every point/bonus rate in the app is capped here. 20% is the 総付景品
+// ceiling under 景品表示法; whether store-issued points count as 景品 at all
+// is arguable, so capping is the safe side of an ambiguous line. Applied both
+// on input and at payout time, so a value saved before the cap existed can
+// never pay out more than 20% either.
+export const MAX_RATE = 20;
+export const clampRate = (v) => Math.min(MAX_RATE, Math.max(0, Number(v) || 0));
+
 const svgUri = (svg) => `data:image/svg+xml,${encodeURIComponent(svg)}`;
 
 export const PICO_PLACEHOLDER = {
@@ -116,17 +124,17 @@ function GachaSettings({ storeSettings, onSave }) {
   const [gachaEnabled, setGachaEnabled] = useState(storeSettings.gachaEnabled ?? true);
   const [normalRows, setNormalRows] = useState(
     storeSettings.gachaNormalRows || [
-      { id: 1, rate: 5, weight: 50 },
-      { id: 2, rate: 10, weight: 30 },
-      { id: 3, rate: 15, weight: 15 },
-      { id: 4, rate: 20, weight: 5 },
+      { id: 1, rate: 2, weight: 50 },
+      { id: 2, rate: 5, weight: 30 },
+      { id: 3, rate: 8, weight: 15 },
+      { id: 4, rate: 10, weight: 5 },
     ]
   );
   const [rainRows, setRainRows] = useState(
     storeSettings.gachaRainRows || [
-      { id: 1, rate: 10, weight: 40 },
-      { id: 2, rate: 20, weight: 40 },
-      { id: 3, rate: 30, weight: 20 },
+      { id: 1, rate: 3, weight: 40 },
+      { id: 2, rate: 6, weight: 40 },
+      { id: 3, rate: 10, weight: 20 },
     ]
   );
   const [mode, setModeSet] = useState("normal");
@@ -149,8 +157,8 @@ function GachaSettings({ storeSettings, onSave }) {
   const save = async () => {
     await onSave({
       gachaEnabled,
-      gachaNormalRows: normalRows,
-      gachaRainRows: rainRows,
+      gachaNormalRows: normalRows.map((r) => ({ ...r, rate: clampRate(r.rate) })),
+      gachaRainRows: rainRows.map((r) => ({ ...r, rate: clampRate(r.rate) })),
       gachaZeroMsg: zeroMsg,
       gachaFreq: freq,
     });
@@ -220,7 +228,7 @@ function GachaSettings({ storeSettings, onSave }) {
                   <input
                     type="number"
                     value={r.rate}
-                    onChange={(e) => update(r.id, "rate", e.target.value)}
+                    onChange={(e) => update(r.id, "rate", clampRate(e.target.value))}
                     className="w-full bg-transparent px-2 py-2 text-sm font-semibold outline-none"
                     style={{ color: C.ink }}
                   />
@@ -356,8 +364,8 @@ function DepositBonusSettings({ storeSettings, onSave }) {
     await onSave({
       depositBonusEnabled: enabled,
       depositBonusFlatMode: flatMode,
-      depositBonusFlatRate: Number(flatRate),
-      depositBonusTiers: tiers,
+      depositBonusFlatRate: clampRate(flatRate),
+      depositBonusTiers: tiers.map((t) => ({ ...t, rate: clampRate(t.rate) })),
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -394,7 +402,7 @@ function DepositBonusSettings({ storeSettings, onSave }) {
               <input
                 type="number"
                 value={flatRate}
-                onChange={(e) => setFlatRate(e.target.value)}
+                onChange={(e) => setFlatRate(clampRate(e.target.value))}
                 className="w-full bg-transparent px-3 py-2 text-sm font-semibold outline-none"
                 style={{ color: C.ink }}
               />
@@ -424,7 +432,7 @@ function DepositBonusSettings({ storeSettings, onSave }) {
                     <input
                       type="number"
                       value={t.rate}
-                      onChange={(e) => updateTier(i, "rate", Number(e.target.value))}
+                      onChange={(e) => updateTier(i, "rate", clampRate(e.target.value))}
                       className="w-full bg-transparent px-2 py-2 text-sm font-semibold outline-none"
                       style={{ color: C.ink }}
                     />
@@ -477,8 +485,8 @@ function PointSettings({ storeSettings, onSave }) {
     await onSave({
       purchasePointEnabled: enabled,
       purchasePointFlatMode: flatMode,
-      purchasePointFlatRate: Number(flatRate),
-      purchasePointTiers: tiers,
+      purchasePointFlatRate: clampRate(flatRate),
+      purchasePointTiers: tiers.map((t) => ({ ...t, rate: clampRate(t.rate) })),
       purchasePointBase: pointBase,
     });
     setSaved(true);
@@ -520,7 +528,7 @@ function PointSettings({ storeSettings, onSave }) {
                 <input
                   type="number"
                   value={flatRate}
-                  onChange={(e) => setFlatRate(e.target.value)}
+                  onChange={(e) => setFlatRate(clampRate(e.target.value))}
                   className="w-full bg-transparent px-3 py-2 text-lg font-bold outline-none"
                   style={{ color: C.ink }}
                 />
@@ -554,7 +562,7 @@ function PointSettings({ storeSettings, onSave }) {
                     <input
                       type="number"
                       value={t.rate}
-                      onChange={(e) => updateTier(i, "rate", Number(e.target.value))}
+                      onChange={(e) => updateTier(i, "rate", clampRate(e.target.value))}
                       className="w-full bg-transparent px-2 py-2 text-sm font-semibold outline-none"
                       style={{ color: C.ink }}
                     />
@@ -622,10 +630,19 @@ function PointSettings({ storeSettings, onSave }) {
 // ---------------- SYSTEM SAFETY SETTINGS (daily cap, unrelated to bonus tables) ----------------
 function SystemSafetySettings({ storeSettings, onSave }) {
   const [dailyCap, setDailyCap] = useState(storeSettings.dailyChargeCap ?? 100000);
+  // Without a per-day limit, a customer can charge → spend → charge again and
+  // collect the bonus every time, so the store's cost has no ceiling. Both
+  // default to once a day.
+  const [depositLimit, setDepositLimit] = useState(storeSettings.depositBonusDailyLimit ?? 1);
+  const [gachaLimit, setGachaLimit] = useState(storeSettings.gachaDailyLimit ?? 1);
   const [saved, setSaved] = useState(false);
 
   const save = async () => {
-    await onSave({ dailyChargeCap: Number(dailyCap) });
+    await onSave({
+      dailyChargeCap: Number(dailyCap),
+      depositBonusDailyLimit: Math.max(1, Number(depositLimit) || 1),
+      gachaDailyLimit: Math.max(1, Number(gachaLimit) || 1),
+    });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -655,6 +672,34 @@ function SystemSafetySettings({ storeSettings, onSave }) {
           これを超えるチャージは本人確認が必要になります(本人確認の閾値設定と連動)
         </div>
       </div>
+
+      <div className="mt-2 rounded-xl p-3" style={{ background: C.cream }}>
+        <div className="text-[11px] font-semibold" style={{ color: C.ink }}>1人1日あたりのボーナス回数</div>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          {[
+            { label: "入金ボーナス", value: depositLimit, set: setDepositLimit },
+            { label: "入金ガチャ", value: gachaLimit, set: setGachaLimit },
+          ].map((f) => (
+            <div key={f.label}>
+              <div className="text-[10px]" style={{ color: C.mute }}>{f.label}</div>
+              <div className="mt-1 flex items-center rounded-lg" style={{ background: "#fff" }}>
+                <input
+                  type="number"
+                  min={1}
+                  value={f.value}
+                  onChange={(e) => f.set(e.target.value)}
+                  className="w-full bg-transparent px-2 py-2 text-sm font-semibold outline-none"
+                  style={{ color: C.ink }}
+                />
+                <span className="pr-2 text-xs font-semibold" style={{ color: C.mute }}>回</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="text-[10px] mt-1" style={{ color: C.mute }}>
+          ※日付は深夜0時で切り替わります。雨の日ボーナスは入金ボーナスと同じ枠を使うため、雨の日ボーナスを受け取ったその日は入金ボーナスが付きません。購入ポイントは回数制限の対象外です
+        </div>
+      </div>
       <button
         onClick={save}
         className="mt-3 w-full rounded-full py-2 text-sm font-bold"
@@ -671,7 +716,7 @@ function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled, storeSetti
   const [area, setArea] = useState(storeSettings.weatherArea || "埼玉県飯能市");
   const [rainThreshold, setRainThreshold] = useState(storeSettings.weatherRainThreshold ?? 60);
   const [autoMode, setAutoMode] = useState(storeSettings.weatherAutoMode || "confirm"); // "confirm" | "auto"
-  const [rate, setRate] = useState(storeSettings.weatherRate ?? 20);
+  const [rate, setRate] = useState(storeSettings.weatherRate ?? 10);
   const [cap, setCap] = useState(storeSettings.weatherCap ?? 50000);
   const [saved, setSaved] = useState(false);
 
@@ -680,7 +725,7 @@ function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled, storeSetti
       weatherArea: area,
       weatherRainThreshold: Number(rainThreshold),
       weatherAutoMode: autoMode,
-      weatherRate: Number(rate),
+      weatherRate: clampRate(rate),
       weatherCap: Number(cap),
     });
     setSaved(true);
@@ -743,7 +788,7 @@ function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled, storeSetti
                   <input
                     type="number"
                     value={rate}
-                    onChange={(e) => setRate(e.target.value)}
+                    onChange={(e) => setRate(clampRate(e.target.value))}
                     className="w-full bg-transparent px-3 py-2 text-sm font-semibold outline-none"
                     style={{ color: C.ink }}
                   />
@@ -831,7 +876,7 @@ function RankSettings({ rankingEnabled, setRankingEnabled, storeSettings, onSave
 
   const save = async () => {
     await onSave({
-      rankTiers: ranks,
+      rankTiers: ranks.map((r) => ({ ...r, rate: clampRate(r.rate) })),
       rankDecideMode: decideMode,
       rankUseVisitCount: useVisitCount,
       rankEvalMethod: evalMethod,
@@ -888,7 +933,7 @@ function RankSettings({ rankingEnabled, setRankingEnabled, storeSettings, onSave
                     <input
                       type="number"
                       value={r.rate}
-                      onChange={(e) => updateRank(i, "rate", e.target.value)}
+                      onChange={(e) => updateRank(i, "rate", clampRate(e.target.value))}
                       className="w-full bg-transparent px-2 py-1.5 text-sm font-semibold outline-none"
                       style={{ color: C.ink }}
                     />
@@ -2247,8 +2292,8 @@ function ReferralSettings({ storeSettings, onSave }) {
   const save = async () => {
     await onSave({
       referralEnabled: enabled,
-      referralReferrerRate: Number(referrerRate),
-      referralRefereeRate: Number(refereeRate),
+      referralReferrerRate: clampRate(referrerRate),
+      referralRefereeRate: clampRate(refereeRate),
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -2282,7 +2327,7 @@ function ReferralSettings({ storeSettings, onSave }) {
                 <input
                   type="number"
                   value={referrerRate}
-                  onChange={(e) => setReferrerRate(e.target.value)}
+                  onChange={(e) => setReferrerRate(clampRate(e.target.value))}
                   className="w-full bg-transparent px-3 py-2 text-sm font-semibold outline-none"
                   style={{ color: C.ink }}
                 />
@@ -2295,7 +2340,7 @@ function ReferralSettings({ storeSettings, onSave }) {
                 <input
                   type="number"
                   value={refereeRate}
-                  onChange={(e) => setRefereeRate(e.target.value)}
+                  onChange={(e) => setRefereeRate(clampRate(e.target.value))}
                   className="w-full bg-transparent px-3 py-2 text-sm font-semibold outline-none"
                   style={{ color: C.ink }}
                 />
@@ -2613,6 +2658,45 @@ function formatDateTime(ts) {
 
 const PAGE_SIZE = 50;
 
+// The store thinks of points in three groups, with the deposit-side ones
+// broken out because they're the ones that get tuned most often.
+function PointBreakdown({ points = {}, compact = false }) {
+  const depositSide =
+    (points.depositBonus || 0) + (points.weather || 0) + (points.gacha || 0);
+  const groups = [
+    {
+      label: "入金ポイント",
+      value: depositSide,
+      children: [
+        { label: "入金ボーナス", value: points.depositBonus || 0 },
+        { label: "雨の日ボーナス", value: points.weather || 0 },
+        { label: "入金ガチャ", value: points.gacha || 0 },
+      ],
+    },
+    { label: "購入ポイント", value: points.purchase || 0, children: [] },
+    { label: "友達紹介ポイント", value: points.referral || 0, children: [] },
+  ];
+
+  return (
+    <div className={compact ? "mt-1" : "mt-2 pt-2"} style={compact ? {} : { borderTop: `1px solid ${C.line}` }}>
+      {groups.map((g) => (
+        <div key={g.label}>
+          <div className="flex justify-between text-[11px]" style={{ color: C.mute }}>
+            <span>{g.label}</span>
+            <span>P{g.value.toLocaleString()}</span>
+          </div>
+          {g.children.map((c) => (
+            <div key={c.label} className="flex justify-between text-[10px] pl-3" style={{ color: C.mute, opacity: 0.75 }}>
+              <span>・{c.label}</span>
+              <span>P{c.value.toLocaleString()}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onBack }) {
   const currentTerm = termKeyOfDate(new Date());
   const termKeys = Object.keys(stats.terms || {});
@@ -2684,10 +2768,20 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onBac
   const exportTermsCsv = () => {
     downloadCsv(
       `picopay-terms-${new Date().toISOString().slice(0, 10)}.csv`,
-      ["期間", "チャージ(預かり金)", "ポイント発行"],
+      ["期間", "チャージ(預かり金)", "ポイント発行", "入金ボーナス", "雨の日ボーナス", "入金ガチャ", "購入ポイント", "友達紹介"],
       termKeys.map((k) => {
         const t = (stats.terms || {})[k] || {};
-        return [termLabelOf(k), t.cash || 0, t.point || 0];
+        const pt = t.points || {};
+        return [
+          termLabelOf(k),
+          t.cash || 0,
+          t.point || 0,
+          pt.depositBonus || 0,
+          pt.weather || 0,
+          pt.gacha || 0,
+          pt.purchase || 0,
+          pt.referral || 0,
+        ];
       })
     );
   };
@@ -2724,6 +2818,7 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onBac
         </div>
         <Row label="累計チャージ(預かり金)" value={`¥${(stats.cashTotal || 0).toLocaleString()}`} />
         <Row label="累計ポイント発行" value={`P${(stats.pointTotal || 0).toLocaleString()}`} />
+        <PointBreakdown points={stats.points || {}} />
       </Card>
 
       <Card title="現在の残高">
@@ -2752,6 +2847,7 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onBac
                   <span>チャージ ¥{(t.cash || 0).toLocaleString()}</span>
                   <span>ポイント発行 P{(t.point || 0).toLocaleString()}</span>
                 </div>
+                <PointBreakdown points={t.points || {}} compact />
               </div>
             );
           })}
@@ -2938,6 +3034,32 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
   const [showAggregate, setShowAggregate] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
+  const [rainSending, setRainSending] = useState(false);
+
+  const todayKey = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
+  const weatherActiveToday = storeSettings.weatherActiveDate === todayKey;
+
+  // Turning the campaign on and announcing it are one action: a bonus nobody
+  // heard about is pointless, and an announcement without the bonus behind it
+  // is worse.
+  const activateWeatherBonus = async () => {
+    setRainSending(true);
+    try {
+      await onSaveStoreSettings({ weatherActiveDate: todayKey });
+      const tokens = customers.flatMap((c) => c.pushTokens || []);
+      if (tokens.length > 0) {
+        const cap = (storeSettings.weatherCap ?? 50000).toLocaleString();
+        const rate = clampRate(storeSettings.weatherRate ?? 10);
+        await onSendPush(tokens, `今日は雨の日ボーナス☔ ¥${cap}までのチャージで${rate}%還元!`);
+        setRainSent(true);
+      }
+    } finally {
+      setRainSending(false);
+    }
+  };
   const [expandedId, setExpandedId] = useState(null);
   const [customerSearch, setCustomerSearch] = useState("");
 
@@ -3028,24 +3150,29 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
                 <span className="text-xs font-bold" style={{ color: C.coral }}>ゲリラボーナス配信</span>
               </div>
               <div className="mt-1 text-sm font-bold" style={{ color: C.ink }}>
-                今日は雨予報 ☔ 配信しますか?
+                {weatherActiveToday ? "本日は雨の日ボーナス実施中です" : "雨の日ボーナスを発動しますか?"}
               </div>
               <div className="text-[11px] mt-1" style={{ color: C.mute }}>
-                5万円まで20%ボーナス・プッシュ通知で一斉配信
+                ¥{(storeSettings.weatherCap ?? 50000).toLocaleString()}まで
+                {clampRate(storeSettings.weatherRate ?? 10)}%ボーナス・プッシュ通知で一斉配信
+              </div>
+              <div className="text-[10px] mt-1" style={{ color: C.mute }}>
+                発動した日は、通常の入金ボーナスに代えてこちらが付きます
               </div>
             </div>
           </div>
-          {rainSent ? (
+          {weatherActiveToday ? (
             <div className="mt-3 rounded-full py-2 text-center text-sm font-bold" style={{ background: "#fff", color: C.coral }}>
-              ✓ 配信しました
+              ✓ 発動中{rainSent ? "・配信しました" : ""}
             </div>
           ) : (
             <button
-              onClick={() => setRainSent(true)}
+              onClick={activateWeatherBonus}
+              disabled={rainSending}
               className="mt-3 w-full rounded-full py-2 text-sm font-bold"
-              style={{ background: C.coral, color: "#fff" }}
+              style={{ background: C.coral, color: "#fff", opacity: rainSending ? 0.6 : 1 }}
             >
-              今すぐ配信する
+              {rainSending ? "発動中…" : "発動して一斉配信する"}
             </button>
           )}
         </div>
