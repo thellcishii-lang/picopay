@@ -95,7 +95,7 @@ exports.handler = async () => {
   if (settings.weatherActiveDate === today) {
     return { statusCode: 200, body: JSON.stringify({ alreadyActive: true }) };
   }
-  const threshold = Number(settings.weatherRainThreshold ?? 60);
+  const threshold = Number(settings.weatherRainThreshold ?? 80);
   if (!current || !(current.pop >= threshold)) {
     return { statusCode: 200, body: JSON.stringify({ pop: current ? current.pop : null, belowThreshold: true }) };
   }
@@ -111,7 +111,7 @@ exports.handler = async () => {
     return { statusCode: 200, body: JSON.stringify({ activated: true, pushed: 0 }) };
   }
 
-  const cap = Number(settings.weatherCap ?? 50000).toLocaleString();
+  const cap = Number(settings.weatherCap ?? 10000).toLocaleString();
   const rate = Math.min(20, Number(settings.weatherRate ?? 10));
   const result = await admin.messaging().sendEachForMulticast({
     notification: {
