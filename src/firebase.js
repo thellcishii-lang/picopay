@@ -1,7 +1,10 @@
 // Firebase setup for PicoPay
 // This connects to the "PicoPay" Firebase project's Realtime Database and Authentication.
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, onValue, set, get, update, remove, increment } from "firebase/database";
+import {
+  getDatabase, ref, onValue, set, get, update, remove, increment,
+  push, query, orderByChild, limitToLast,
+} from "firebase/database";
 import { getMessaging, getToken, isSupported as isMessagingSupported } from "firebase/messaging";
 import {
   getAuth,
@@ -99,33 +102,14 @@ export async function sendPhoneCode(phoneNumber, recaptchaVerifier) {
 // One "account" = one customer's PicoPay balance/history.
 // Path in the database: accounts/<customerId>
 
+// Transactions live under `transactions/<customerId>`, not in here. Keeping
+// them nested meant every read of an account — and the customer list reads
+// them all — downloaded the entire transaction history along with it, which
+// is billed by the byte and grows forever.
 const DEFAULT_ACCOUNT = {
-  pointBalance: 1200,
-  depositBalance: 3000,
+  pointBalance: 0,
+  depositBalance: 0,
   bonusEligible: false,
-  history: [
-    {
-      date: "7/22",
-      summary: "お会計・チャージ",
-      total: -1800,
-      items: [{ label: "お会計(お化粧品)", amount: -1800 }],
-    },
-    {
-      date: "7/20",
-      summary: "チャージ+ボーナス15%",
-      total: 11500,
-      items: [
-        { label: "チャージ", amount: 10000 },
-        { label: "ボーナス(15%)", amount: 1500 },
-      ],
-    },
-    {
-      date: "7/15",
-      summary: "お会計",
-      total: -2400,
-      items: [{ label: "お会計(トリートメント)", amount: -2400 }],
-    },
-  ],
 };
 
 // Read just a customer's phone number (public by design — see security
@@ -335,18 +319,25 @@ export async function getStats() {
 // Entries written before timestamps existed are skipped: without a date
 // there's no way to say which term they belong to.
 export async function listTransactions({ termKey = null, nameQuery = "" } = {}) {
-  const snapshot = await get(ref(db, "accounts"));
-  const data = snapshot.val() || {};
+  // Two reads instead of one: the accounts node (small — names and balances
+  // only) and the transactions node. Only the 集計 screen calls this.
+  const [accountsSnap, txSnap] = await Promise.all([
+    get(ref(db, "accounts")),
+    get(ref(db, "transactions")),
+  ]);
+  const accounts = accountsSnap.val() || {};
+  const byCustomer = txSnap.val() || {};
+
   const rows = [];
-  for (const [id, acc] of Object.entries(data)) {
-    const name = acc.profile?.name || "(名前未登録)";
+  for (const [id, entries] of Object.entries(byCustomer)) {
+    const name = accounts[id]?.profile?.name || "(名前未登録)";
     if (nameQuery && !name.includes(nameQuery) && !id.includes(nameQuery)) continue;
-    for (const h of acc.history || []) {
+    for (const [key, h] of Object.entries(entries || {})) {
       if (!h.ts) continue;
       // 購入ポイントはお会計の行に付与ポイントとして出るので、単独では出さない
       if (h.kind === "purchasePoint") continue;
       if (termKey && termKeyOf(new Date(h.ts)) !== termKey) continue;
-      rows.push({ ...h, customerId: id, customerName: name });
+      rows.push({ ...h, id: key, customerId: id, customerName: name });
     }
   }
   rows.sort((a, b) => b.ts - a.ts);
@@ -435,4 +426,47 @@ export async function lookupWeatherArea(zip) {
   }
   if (!res.ok) throw new Error(`${json.error || "地域の判定に失敗しました"}(${res.status})`);
   return json;
+}
+
+// ---- Transactions ----
+// Stored per customer under transactions/<customerId>/<pushId>, deliberately
+// outside the account. Accounts are read constantly (the customer list reads
+// every one of them on every sale); transactions are read rarely and grow
+// without limit, so the two don't belong in the same place.
+
+export async function appendTransactions(customerId, entries) {
+  if (!entries || entries.length === 0) return;
+  const updates = {};
+  for (const entry of entries) {
+    const key = push(ref(db, `transactions/${customerId}`)).key;
+    updates[`transactions/${customerId}/${key}`] = entry;
+  }
+  await update(ref(db), updates);
+}
+
+// Newest first. `limit` caps what comes down the wire — the customer's screen
+// asks for a page at a time rather than the whole history.
+export async function listAccountTransactions(customerId, limit = 50) {
+  const snapshot = await get(
+    query(ref(db, `transactions/${customerId}`), orderByChild("ts"), limitToLast(limit))
+  );
+  const rows = [];
+  snapshot.forEach((child) => {
+    rows.push({ id: child.key, ...child.val() });
+  });
+  return rows.reverse();
+}
+
+// Live version for the customer's own screen, capped the same way.
+export function subscribeToAccountTransactions(customerId, callback, limit = 50) {
+  return onValue(
+    query(ref(db, `transactions/${customerId}`), orderByChild("ts"), limitToLast(limit)),
+    (snapshot) => {
+      const rows = [];
+      snapshot.forEach((child) => {
+        rows.push({ id: child.key, ...child.val() });
+      });
+      callback(rows.reverse());
+    }
+  );
 }
