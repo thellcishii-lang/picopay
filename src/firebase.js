@@ -352,3 +352,57 @@ export async function listTransactions({ termKey = null, nameQuery = "" } = {}) 
   rows.sort((a, b) => b.ts - a.ts);
   return rows;
 }
+
+// Reference-date (基準日) snapshots. The scheduled Netlify function writes
+// these just after midnight on 4/1 and 10/1. This is the client-side
+// fallback: if a run was missed, the store's 集計 screen records it the next
+// time it's opened, flagged `late` so nobody mistakes it for the real
+// closing figure.
+export function closedTermKeysSince(startedAt, now = new Date()) {
+  if (!startedAt) return [];
+  const keys = [];
+  const start = new Date(startedAt);
+  for (let y = start.getFullYear() - 1; y <= now.getFullYear(); y += 1) {
+    // 前期 closes 9/30, 後期 closes 3/31 of the following year.
+    const candidates = [
+      { key: `${y}-H1`, end: new Date(y, 8, 30, 23, 59, 59) },
+      { key: `${y}-H2`, end: new Date(y + 1, 2, 31, 23, 59, 59) },
+    ];
+    for (const c of candidates) {
+      if (c.end > start && c.end < now) keys.push(c.key);
+    }
+  }
+  return keys;
+}
+
+export async function recordMissingSnapshots() {
+  const stats = await getStats();
+  if (!stats.startedAt) return;
+  const due = closedTermKeysSince(stats.startedAt);
+  const missing = due.filter((k) => !(stats.snapshots || {})[k]);
+  if (missing.length === 0) return;
+
+  const accountsSnap = await get(ref(db, "accounts"));
+  const accounts = accountsSnap.val() || {};
+  let deposit = 0;
+  let point = 0;
+  for (const acc of Object.values(accounts)) {
+    deposit += acc.depositBalance || 0;
+    point += acc.pointBalance || 0;
+  }
+
+  const updates = {};
+  for (const key of missing) {
+    const term = (stats.terms || {})[key] || {};
+    updates[`stats/snapshots/${key}`] = {
+      at: Date.now(),
+      date: null,
+      deposit,
+      point,
+      cash: term.cash || 0,
+      issuedPoints: term.point || 0,
+      late: true,
+    };
+  }
+  await update(ref(db), updates);
+}
