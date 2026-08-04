@@ -712,19 +712,51 @@ function SystemSafetySettings({ storeSettings, onSave }) {
 }
 
 // ---------------- WEATHER-LINKED GUERRILLA CAMPAIGN SETTINGS ----------------
-function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled, storeSettings, onSave }) {
-  const [area, setArea] = useState(storeSettings.weatherArea || "埼玉県飯能市");
+function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled, storeSettings, onSave, onLookupArea }) {
+  const [zip, setZip] = useState(storeSettings.weatherZip || "");
+  const [areaCode, setAreaCode] = useState(storeSettings.weatherAreaCode || "");
+  const [areaName, setAreaName] = useState(storeSettings.weatherArea || "");
+  const [areaChoices, setAreaChoices] = useState([]);
+  const [looking, setLooking] = useState(false);
+  const [lookupError, setLookupError] = useState(null);
   const [rainThreshold, setRainThreshold] = useState(storeSettings.weatherRainThreshold ?? 60);
   const [autoMode, setAutoMode] = useState(storeSettings.weatherAutoMode || "confirm"); // "confirm" | "auto"
+  const [sendHour, setSendHour] = useState(storeSettings.weatherSendHour ?? 10);
   const [rate, setRate] = useState(storeSettings.weatherRate ?? 10);
   const [cap, setCap] = useState(storeSettings.weatherCap ?? 50000);
   const [saved, setSaved] = useState(false);
 
+  // Resolving the postal code happens once, here — not every morning. The
+  // forecast job only ever needs the area code that comes out of it, so an
+  // outage at the postal-lookup service can't stop the campaign running.
+  const lookupArea = async () => {
+    setLooking(true);
+    setLookupError(null);
+    try {
+      const result = await onLookupArea(zip.replace(/[^0-9]/g, ""));
+      setAreaChoices(result.areas || []);
+      const first = (result.areas || [])[0];
+      if (first) {
+        setAreaCode(first.code);
+        setAreaName(`${result.pref}${first.name}`);
+      } else {
+        setLookupError("この郵便番号から地域を特定できませんでした");
+      }
+    } catch (e) {
+      setLookupError(e.message || "地域の判定に失敗しました");
+    } finally {
+      setLooking(false);
+    }
+  };
+
   const save = async () => {
     await onSave({
-      weatherArea: area,
+      weatherZip: zip,
+      weatherAreaCode: areaCode,
+      weatherArea: areaName,
       weatherRainThreshold: Number(rainThreshold),
       weatherAutoMode: autoMode,
+      weatherSendHour: Number(sendHour),
       weatherRate: clampRate(rate),
       weatherCap: Number(cap),
     });
@@ -758,13 +790,52 @@ function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled, storeSetti
         <>
           <div className="mt-3 space-y-2">
             <div>
-              <div className="text-[11px] font-semibold" style={{ color: C.ink }}>地域(天気予報の取得地点)</div>
-              <input
-                value={area}
-                onChange={(e) => setArea(e.target.value)}
-                className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none"
-                style={{ background: C.cream, color: C.ink }}
-              />
+              <div className="text-[11px] font-semibold" style={{ color: C.ink }}>郵便番号(天気予報の取得地点)</div>
+              <div className="mt-1 flex gap-2">
+                <input
+                  value={zip}
+                  onChange={(e) => setZip(e.target.value)}
+                  placeholder="例: 3570000"
+                  inputMode="numeric"
+                  className="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
+                  style={{ background: C.cream, color: C.ink }}
+                />
+                <button
+                  onClick={lookupArea}
+                  disabled={looking}
+                  className="rounded-lg px-4 text-[11px] font-semibold"
+                  style={{ background: C.teal, color: "#fff", opacity: looking ? 0.6 : 1 }}
+                >
+                  {looking ? "判定中…" : "地域を判定"}
+                </button>
+              </div>
+              {lookupError && (
+                <div className="mt-1 text-[10px] font-semibold" style={{ color: C.coral }}>{lookupError}</div>
+              )}
+              {areaName && (
+                <div className="mt-1 text-[11px]" style={{ color: C.mute }}>
+                  予報の地域:<span style={{ color: C.ink, fontWeight: 700 }}>{areaName}</span>
+                </div>
+              )}
+              {areaChoices.length > 1 && (
+                <select
+                  value={areaCode}
+                  onChange={(e) => {
+                    const picked = areaChoices.find((a) => a.code === e.target.value);
+                    setAreaCode(e.target.value);
+                    if (picked) setAreaName(picked.name);
+                  }}
+                  className="mt-1 w-full rounded-lg px-2 py-2 text-[11px] outline-none"
+                  style={{ background: C.cream, color: C.ink }}
+                >
+                  {areaChoices.map((a) => (
+                    <option key={a.code} value={a.code}>{a.name}</option>
+                  ))}
+                </select>
+              )}
+              <div className="text-[10px] mt-1" style={{ color: C.mute }}>
+                気象庁の予報は市区町村単位ではなく県内の区分単位です。違う区分が選ばれた場合は選び直してください
+              </div>
             </div>
 
             <div>
@@ -832,11 +903,30 @@ function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled, storeSetti
             ))}
           </div>
 
+          {autoMode === "auto" && (
+            <div className="mt-2">
+              <div className="text-[11px] font-semibold" style={{ color: C.ink }}>自動配信する時刻</div>
+              <select
+                value={sendHour}
+                onChange={(e) => setSendHour(e.target.value)}
+                className="mt-1 w-full rounded-lg px-2 py-2 text-sm outline-none"
+                style={{ background: C.cream, color: C.ink }}
+              >
+                {Array.from({ length: 18 }, (_, i) => i + 6).map((h) => (
+                  <option key={h} value={h}>{h}時</option>
+                ))}
+              </select>
+              <div className="text-[10px] mt-1" style={{ color: C.mute }}>
+                この時刻の降水確率が条件を満たしていれば、その場で発動して一斉配信します
+              </div>
+            </div>
+          )}
+
           <div className="mt-3 rounded-xl p-3" style={{ background: C.coralSoft }}>
             <div className="text-[11px] font-semibold" style={{ color: C.coral }}>プレビュー</div>
             <div className="text-[11px] mt-1" style={{ color: C.ink }}>
-              {area}の降水確率が{rainThreshold}%以上の日、
-              {autoMode === "auto" ? "自動で" : "配信確認を出して"}
+              {areaName || "(郵便番号を判定してください)"}の降水確率が{rainThreshold}%以上の日、
+              {autoMode === "auto" ? `${sendHour}時に自動で` : "配信確認を出して"}
               「今日は雨予報 ☔ ¥{Number(cap).toLocaleString()}までチャージで{rate}%ボーナス」を配信
             </div>
           </div>
@@ -3075,7 +3165,7 @@ function SignOutButton({ onSignOut }) {
   );
 }
 
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, storeSettings = {}, onSaveStoreSettings, onSendPush, onSignOut, stats = {}, onLoadTransactions }) {
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, storeSettings = {}, onSaveStoreSettings, onSendPush, onSignOut, stats = {}, onLoadTransactions, weather = {}, onLookupArea }) {
   const [tab, setTab] = useState("dashboard");
   const [showAggregate, setShowAggregate] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
@@ -3087,6 +3177,11 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   })();
   const weatherActiveToday = storeSettings.weatherActiveDate === todayKey;
+  // Written by the hourly job. Null until the first run of the day, in which
+  // case the card falls back to the plain wording.
+  const popToday = weather.date === todayKey && weather.currentPop != null ? weather.currentPop : null;
+  const rainLikelyToday =
+    popToday !== null && popToday >= Number(storeSettings.weatherRainThreshold ?? 60);
 
   // Turning the campaign on and announcing it are one action: a bonus nobody
   // heard about is pointless, and an announcement without the bonus behind it
@@ -3184,7 +3279,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
       </div>
 
       {/* Guerrilla campaign card — the "signature" element */}
-      {weatherEnabled && (
+      {weatherEnabled && (weatherActiveToday || rainLikelyToday) && (
         <div
           className="mt-4 rounded-2xl p-4 relative overflow-hidden"
           style={{ background: C.coralSoft }}
@@ -3196,8 +3291,15 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
                 <span className="text-xs font-bold" style={{ color: C.coral }}>ゲリラボーナス配信</span>
               </div>
               <div className="mt-1 text-sm font-bold" style={{ color: C.ink }}>
-                {weatherActiveToday ? "本日は雨の日ボーナス実施中です" : "雨の日ボーナスを発動しますか?"}
+                {popToday === null
+                  ? "雨の日ボーナスを発動しますか?"
+                  : `本日は雨の確率が${popToday}%です`}
               </div>
+              {weatherActiveToday && (
+                <div className="text-[11px] font-bold" style={{ color: C.coral }}>
+                  雨の日ボーナス実施中
+                </div>
+              )}
               <div className="text-[11px] mt-1" style={{ color: C.mute }}>
                 ¥{(storeSettings.weatherCap ?? 50000).toLocaleString()}まで
                 {clampRate(storeSettings.weatherRate ?? 10)}%ボーナス・プッシュ通知で一斉配信
@@ -3337,7 +3439,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
           <DepositBonusSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <GachaSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <SystemSafetySettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
-          <WeatherCampaignSettings weatherEnabled={weatherEnabled} setWeatherEnabled={setWeatherEnabled} storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+          <WeatherCampaignSettings weatherEnabled={weatherEnabled} setWeatherEnabled={setWeatherEnabled} storeSettings={storeSettings} onSave={onSaveStoreSettings} onLookupArea={onLookupArea} />
           <StoreBrandingSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <button
             onClick={() => setShowAggregate(true)}
