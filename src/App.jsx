@@ -19,6 +19,7 @@ import {
   getStats,
   ensureStatsStarted,
   listTransactions,
+  recordMissingSnapshots,
   DEFAULT_ACCOUNT,
   auth,
   subscribeToAuth,
@@ -311,7 +312,11 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (mode !== "store" || !authUser) return;
-    ensureStatsStarted().then(refreshStats);
+    ensureStatsStarted()
+      // If the scheduled reference-date job ever missed a run, fill the gap
+      // here rather than leaving a hole in the record.
+      .then(() => recordMissingSnapshots().catch(() => {}))
+      .then(refreshStats);
   }, [mode, authUser, refreshStats]);
 
   const handleSaveStoreSettings = async (updates) => {
