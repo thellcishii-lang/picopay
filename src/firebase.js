@@ -417,8 +417,22 @@ export function subscribeToWeather(callback) {
 // Resolves a postal code to a 気象庁 forecast area. Runs only when the store
 // saves its weather settings.
 export async function lookupWeatherArea(zip) {
-  const res = await fetch(`/.netlify/functions/lookup-area?zip=${encodeURIComponent(zip)}`);
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json.error || "地域の判定に失敗しました");
+  let res;
+  try {
+    res = await fetch(`/.netlify/functions/lookup-area?zip=${encodeURIComponent(zip)}`);
+  } catch (e) {
+    throw new Error("通信に失敗しました(オフラインの可能性があります)");
+  }
+  const text = await res.text();
+  let json = {};
+  try {
+    json = JSON.parse(text);
+  } catch (e) {
+    // A non-JSON body means the request never reached the function — most
+    // often the function isn't deployed and Netlify returned the SPA's
+    // index.html instead. Say so plainly rather than "判定に失敗しました".
+    throw new Error(`地域判定の処理が見つかりません(応答コード ${res.status})`);
+  }
+  if (!res.ok) throw new Error(`${json.error || "地域の判定に失敗しました"}(${res.status})`);
   return json;
 }
