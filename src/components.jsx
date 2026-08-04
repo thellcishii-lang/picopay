@@ -716,6 +716,10 @@ function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled, storeSetti
   const [zip, setZip] = useState(storeSettings.weatherZip || "");
   const [areaCode, setAreaCode] = useState(storeSettings.weatherAreaCode || "");
   const [areaName, setAreaName] = useState(storeSettings.weatherArea || "");
+  // The publishing office, saved alongside the area. It can't be derived from
+  // the area code reliably — 北海道, 鹿児島, 沖縄 have several offices and their
+  // codes don't simply zero out — so it's stored rather than recomputed.
+  const [office, setOffice] = useState(storeSettings.weatherOffice || "");
   const [areaChoices, setAreaChoices] = useState([]);
   const [looking, setLooking] = useState(false);
   const [lookupError, setLookupError] = useState(null);
@@ -735,6 +739,7 @@ function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled, storeSetti
     try {
       const result = await onLookupArea(zip.replace(/[^0-9]/g, ""));
       setAreaChoices(result.areas || []);
+      setOffice(result.office || "");
       const first = (result.areas || [])[0];
       if (first) {
         setAreaCode(first.code);
@@ -752,6 +757,7 @@ function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled, storeSetti
   const save = async () => {
     await onSave({
       weatherZip: zip,
+      weatherOffice: office,
       weatherAreaCode: areaCode,
       weatherArea: areaName,
       weatherRainThreshold: Number(rainThreshold),
@@ -795,7 +801,7 @@ function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled, storeSetti
                 <input
                   value={zip}
                   onChange={(e) => setZip(e.target.value)}
-                  placeholder="例: 3570000"
+                  placeholder="例: 1231234"
                   inputMode="numeric"
                   className="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
                   style={{ background: C.cream, color: C.ink }}
