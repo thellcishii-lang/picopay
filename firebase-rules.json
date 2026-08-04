@@ -6,8 +6,12 @@
         ".read": "auth != null && (auth.token.email != null || auth.token.phone_number == data.child('profile/phone').val())",
         ".write": "auth != null && (auth.token.email != null || auth.token.phone_number == data.child('profile/phone').val())",
         ".validate": "newData.hasChildren(['pointBalance', 'depositBalance', 'bonusEligible'])",
-        "pointBalance": { ".validate": "newData.isNumber() && newData.val() >= 0" },
-        "depositBalance": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+        "pointBalance": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "depositBalance": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
         "profile": {
           "phone": {
             ".read": true
@@ -31,6 +35,10 @@
     "$other": {
       ".read": false,
       ".write": false
+    },
+    "stats": {
+      ".read": "auth != null",
+      ".write": "auth != null"
     }
   }
 }
