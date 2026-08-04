@@ -2768,10 +2768,23 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onBac
   const exportTermsCsv = () => {
     downloadCsv(
       `picopay-terms-${new Date().toISOString().slice(0, 10)}.csv`,
-      ["期間", "チャージ(預かり金)", "ポイント発行", "入金ボーナス", "雨の日ボーナス", "入金ガチャ", "購入ポイント", "友達紹介"],
+      [
+        "期間",
+        "チャージ(預かり金)",
+        "ポイント発行",
+        "入金ボーナス",
+        "雨の日ボーナス",
+        "入金ガチャ",
+        "購入ポイント",
+        "友達紹介",
+        "基準日時点の預かり残高",
+        "基準日時点の未使用ポイント",
+        "記録",
+      ],
       termKeys.map((k) => {
         const t = (stats.terms || {})[k] || {};
         const pt = t.points || {};
+        const snap = (stats.snapshots || {})[k];
         return [
           termLabelOf(k),
           t.cash || 0,
@@ -2781,6 +2794,9 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onBac
           pt.gacha || 0,
           pt.purchase || 0,
           pt.referral || 0,
+          snap ? snap.deposit || 0 : "",
+          snap ? snap.point || 0 : "",
+          snap ? (snap.late ? "後日記録" : "基準日") : "未記録",
         ];
       })
     );
@@ -2848,6 +2864,36 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onBac
                   <span>ポイント発行 P{(t.point || 0).toLocaleString()}</span>
                 </div>
                 <PointBreakdown points={t.points || {}} compact />
+                {(() => {
+                  const snap = (stats.snapshots || {})[key];
+                  if (!snap) {
+                    return key === currentTerm ? null : (
+                      <div className="mt-1 text-[10px]" style={{ color: C.mute }}>
+                        基準日の残高は未記録です
+                      </div>
+                    );
+                  }
+                  const over = (snap.deposit || 0) > 10000000;
+                  return (
+                    <div className="mt-1 pt-1" style={{ borderTop: `1px dashed ${C.line}` }}>
+                      <div className="flex justify-between text-[10px]" style={{ color: C.mute }}>
+                        <span>基準日時点の預かり残高{snap.late ? "(後日記録)" : ""}</span>
+                        <span style={over ? { color: C.coral, fontWeight: 700 } : {}}>
+                          ¥{(snap.deposit || 0).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-[10px]" style={{ color: C.mute }}>
+                        <span>基準日時点の未使用ポイント</span>
+                        <span>P{(snap.point || 0).toLocaleString()}</span>
+                      </div>
+                      {over && (
+                        <div className="mt-1 text-[10px] font-semibold" style={{ color: C.coral }}>
+                          ⚠️ 1,000万円を超えています。財務局への届出が必要になる場合があります
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}
