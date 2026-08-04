@@ -295,19 +295,32 @@ export async function ensureStatsStarted() {
 }
 
 // `cash` is money actually paid in (charges only — bonuses are never cash).
-// `point` is every point the store issued, whatever the reason.
-export async function recordStats({ cash = 0, point = 0 }) {
-  if (!cash && !point) return;
+// `points` is a per-category breakdown, mirroring how the store thinks about
+// them: 入金ポイント (depositBonus / weather / gacha), 購入ポイント (purchase),
+// 友達紹介ポイント (referral). The grand total is kept alongside so the
+// dashboard doesn't have to add the categories up itself.
+export const POINT_CATEGORIES = ["depositBonus", "weather", "gacha", "purchase", "referral"];
+
+export async function recordStats({ cash = 0, points = {} }) {
   const term = termKeyOf();
   const updates = {};
   if (cash) {
     updates["stats/cashTotal"] = increment(cash);
     updates[`stats/terms/${term}/cash`] = increment(cash);
   }
-  if (point) {
-    updates["stats/pointTotal"] = increment(point);
-    updates[`stats/terms/${term}/point`] = increment(point);
+  let pointTotal = 0;
+  for (const key of POINT_CATEGORIES) {
+    const value = points[key] || 0;
+    if (!value) continue;
+    pointTotal += value;
+    updates[`stats/points/${key}`] = increment(value);
+    updates[`stats/terms/${term}/points/${key}`] = increment(value);
   }
+  if (pointTotal) {
+    updates["stats/pointTotal"] = increment(pointTotal);
+    updates[`stats/terms/${term}/point`] = increment(pointTotal);
+  }
+  if (Object.keys(updates).length === 0) return;
   await update(ref(db), updates);
 }
 
