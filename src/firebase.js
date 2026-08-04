@@ -406,3 +406,19 @@ export async function recordMissingSnapshots() {
   }
   await update(ref(db), updates);
 }
+
+// Today's rain probability, written by the hourly weather job. Read-only
+// here — the browser never calls 気象庁 directly, so every device shows the
+// same number and the forecast isn't fetched once per open tab.
+export function subscribeToWeather(callback) {
+  return onValue(ref(db, "weather"), (snapshot) => callback(snapshot.val() || {}));
+}
+
+// Resolves a postal code to a 気象庁 forecast area. Runs only when the store
+// saves its weather settings.
+export async function lookupWeatherArea(zip) {
+  const res = await fetch(`/.netlify/functions/lookup-area?zip=${encodeURIComponent(zip)}`);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || "地域の判定に失敗しました");
+  return json;
+}
