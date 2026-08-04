@@ -1,7 +1,7 @@
 // Firebase setup for PicoPay
 // This connects to the "PicoPay" Firebase project's Realtime Database and Authentication.
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, onValue, set, get, update, remove } from "firebase/database";
+import { getDatabase, ref, onValue, set, get, update, remove, increment } from "firebase/database";
 import { getMessaging, getToken, isSupported as isMessagingSupported } from "firebase/messaging";
 import {
   getAuth,
@@ -256,4 +256,60 @@ export async function getStoreSettings() {
 
 export async function saveStoreSettings(settings) {
   await update(ref(db, "storeSettings"), settings);
+}
+
+
+// ---- Running totals (the store's dashboard + the 集計 screen) ----
+// Counting these up from every customer's history on each page load would
+// mean reading the entire database every time, so instead each transaction
+// adds to a small counter here. Reads stay cheap no matter how many
+// transactions pile up.
+//
+// Terms follow the prepaid-instrument reference dates:
+//   前期 = 4/1–9/30  (key "<year>-H1")
+//   後期 = 10/1–3/31 (key "<year>-H2", where <year> is the year it started)
+export function termKeyOf(date = new Date()) {
+  const y = date.getFullYear();
+  const m = date.getMonth() + 1;
+  if (m >= 4 && m <= 9) return `${y}-H1`;
+  if (m >= 10) return `${y}-H2`;
+  return `${y - 1}-H2`;
+}
+
+// Human-readable range for a term key, e.g. "2026-H1" → "2026/4/1〜2026/9/30".
+export function termLabel(key) {
+  const [y, half] = key.split("-");
+  const year = Number(y);
+  return half === "H1"
+    ? `${year}/4/1〜${year}/9/30`
+    : `${year}/10/1〜${year + 1}/3/31`;
+}
+
+// Stamps the start date the first time the store signs in. Everything the
+// 集計 screen shows is "since this date".
+export async function ensureStatsStarted() {
+  const snap = await get(ref(db, "stats/startedAt"));
+  if (!snap.exists()) await set(ref(db, "stats/startedAt"), Date.now());
+}
+
+// `cash` is money actually paid in (charges only — bonuses are never cash).
+// `point` is every point the store issued, whatever the reason.
+export async function recordStats({ cash = 0, point = 0 }) {
+  if (!cash && !point) return;
+  const term = termKeyOf();
+  const updates = {};
+  if (cash) {
+    updates["stats/cashTotal"] = increment(cash);
+    updates[`stats/terms/${term}/cash`] = increment(cash);
+  }
+  if (point) {
+    updates["stats/pointTotal"] = increment(point);
+    updates[`stats/terms/${term}/point`] = increment(point);
+  }
+  await update(ref(db), updates);
+}
+
+export async function getStats() {
+  const snapshot = await get(ref(db, "stats"));
+  return snapshot.val() || {};
 }
