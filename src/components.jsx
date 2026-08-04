@@ -463,6 +463,10 @@ function PointSettings({ storeSettings, onSave }) {
       { upTo: null, rate: 8 }, // null upTo = それ以上
     ]
   );
+  // "deposit" = 預かり金から払った分だけが対象 / "total" = お会計総額が対象。
+  // 総額を対象にすると、ポイントで払った分にもポイントが付くので還元が
+  // 雪だるま式に膨らむ。既定を預かり金側にしてあるのはそのため。
+  const [pointBase, setPointBase] = useState(storeSettings.purchasePointBase || "deposit");
   const [saved, setSaved] = useState(false);
 
   const updateTier = (i, key, value) => {
@@ -475,6 +479,7 @@ function PointSettings({ storeSettings, onSave }) {
       purchasePointFlatMode: flatMode,
       purchasePointFlatRate: Number(flatRate),
       purchasePointTiers: tiers,
+      purchasePointBase: pointBase,
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -562,6 +567,44 @@ function PointSettings({ storeSettings, onSave }) {
               </div>
             </div>
           )}
+
+          <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
+            <div className="text-[11px] font-semibold" style={{ color: C.ink }}>ポイントを付ける対象</div>
+            <div className="mt-2 space-y-2">
+              {[
+                {
+                  key: "deposit",
+                  label: "預かり金から払った分",
+                  note: "ポイントで払った分にはポイントが付きません",
+                },
+                {
+                  key: "total",
+                  label: "お会計の総額",
+                  note: "ポイントで払った分にもポイントが付きます",
+                },
+              ].map((o) => (
+                <label
+                  key={o.key}
+                  className="flex items-start gap-2 rounded-xl p-3 cursor-pointer"
+                  style={{
+                    background: pointBase === o.key ? C.coralSoft : C.cream,
+                    border: `1px solid ${pointBase === o.key ? C.coral : "transparent"}`,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={pointBase === o.key}
+                    onChange={() => setPointBase(o.key)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="block text-[12px] font-semibold" style={{ color: C.ink }}>{o.label}</span>
+                    <span className="block text-[10px] mt-0.5" style={{ color: C.mute }}>{o.note}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
         </>
       )}
 
@@ -2579,7 +2622,7 @@ function SignOutButton({ onSignOut }) {
   );
 }
 
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, storeSettings = {}, onSaveStoreSettings, onSendPush, onSignOut }) {
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, storeSettings = {}, onSaveStoreSettings, onSendPush, onSignOut, stats = {} }) {
   const [tab, setTab] = useState("dashboard");
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
@@ -2634,8 +2677,8 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
       <div className="mt-4 grid grid-cols-3 gap-2">
         {[
           { icon: Users, label: "登録客数", value: customers.length },
-          { icon: TrendingUp, label: "今月チャージ", value: "¥318,000" },
-          { icon: Gift, label: "今月ボーナス付与", value: "¥41,200" },
+          { icon: TrendingUp, label: "累計チャージ", value: `¥${(stats.cashTotal || 0).toLocaleString()}` },
+          { icon: Gift, label: "累計ポイント発行", value: `P${(stats.pointTotal || 0).toLocaleString()}` },
         ].map((s, i) => (
           <div key={i} className="rounded-xl p-3" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
             <s.icon size={16} style={{ color: C.teal }} />
