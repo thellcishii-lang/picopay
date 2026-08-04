@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import ModeTopBar from "./TopBar.jsx";
-import { C, StoreView, CustomerView, PICO_PLACEHOLDER, resolveBrandImage } from "./components.jsx";
+import { C, StoreView, CustomerView, PICO_PLACEHOLDER, resolveBrandImage, clampRate } from "./components.jsx";
 import {
   subscribeToAccount,
   getAccountOnce,
@@ -398,19 +398,26 @@ export default function App() {
     await sendPushNotification({ tokens, title, body });
   };
 
+  // Local calendar day, switching at midnight — used for the per-day bonus caps.
+  const dayKey = (d = new Date()) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
   const computeDepositBonus = (amount) => {
     if (!storeSettings.depositBonusEnabled) return 0;
     if (storeSettings.depositBonusFlatMode) {
-      return Math.round(amount * ((storeSettings.depositBonusFlatRate || 0) / 100));
+      return Math.round(amount * (clampRate(storeSettings.depositBonusFlatRate) / 100));
     }
     const tiers = storeSettings.depositBonusTiers || [];
     const tier = tiers.find((t) => t.upTo === null || amount <= t.upTo) || tiers[tiers.length - 1];
-    return tier ? Math.round(amount * ((tier.rate || 0) / 100)) : 0;
+    return tier ? Math.round(amount * (clampRate(tier.rate) / 100)) : 0;
   };
 
   const handleCharge = async (amount, customerId) => {
     if (!customerId) return;
     let issuedPoints = 0;
+    let issuedDeposit = 0;
+    let issuedReferral = 0;
+    let weatherUsed = false;
     const result = await applyToAccount(customerId, (prev) => {
       // If this customer was referred and hasn't received their referral
       // bonus yet, this first charge is what triggers both bonuses.
@@ -419,7 +426,29 @@ export default function App() {
       const refereeBonus = giveReferralBonus
         ? Math.round(amount * ((storeSettings.referralRefereeRate || 0) / 100))
         : 0;
-      const depositBonus = computeDepositBonus(amount);
+      // 雨の日ボーナスは入金ボーナスと同じ枠。どちらか一方だけが付き、
+      // 使い切ったらその日は以降のチャージにボーナスが付かない。
+      const today = dayKey();
+      const daily =
+        prev.dailyBonus?.date === today
+          ? { ...prev.dailyBonus }
+          : { date: today, depositCount: 0, gachaCount: 0 };
+      const depositLimit = Math.max(1, storeSettings.depositBonusDailyLimit ?? 1);
+      const weatherActive =
+        storeSettings.weatherEnabled !== false && storeSettings.weatherActiveDate === today;
+
+      let depositBonus = 0;
+      let bonusLabel = "入金ボーナス";
+      if ((daily.depositCount || 0) < depositLimit) {
+        if (weatherActive) {
+          const base = Math.min(amount, storeSettings.weatherCap ?? amount);
+          depositBonus = Math.round(base * (clampRate(storeSettings.weatherRate) / 100));
+          bonusLabel = "雨の日ボーナス";
+        } else {
+          depositBonus = computeDepositBonus(amount);
+        }
+        if (depositBonus > 0) daily.depositCount = (daily.depositCount || 0) + 1;
+      }
       const history = [
         {
           date: "今日",
@@ -436,11 +465,12 @@ export default function App() {
         history.unshift({
           date: "今日",
           ts: Date.now(),
-          summary: "入金ボーナス",
+          summary: bonusLabel,
           kind: "point",
+          category: weatherActive ? "weather" : "depositBonus",
           point: depositBonus,
           total: depositBonus,
-          items: [{ label: "入金ボーナス", amount: depositBonus }],
+          items: [{ label: bonusLabel, amount: depositBonus }],
         });
       }
       if (refereeBonus > 0) {
@@ -449,14 +479,19 @@ export default function App() {
           ts: Date.now(),
           summary: `お友達紹介ボーナス+${storeSettings.referralRefereeRate}%`,
           kind: "point",
+          category: "referral",
           point: refereeBonus,
           total: refereeBonus,
           items: [{ label: "お友達紹介ボーナス(紹介された方)", amount: refereeBonus }],
         });
       }
       issuedPoints = refereeBonus + depositBonus;
+      issuedDeposit = depositBonus;
+      issuedReferral = refereeBonus;
+      weatherUsed = weatherActive && depositBonus > 0;
       return {
         ...prev,
+        dailyBonus: daily,
         depositBalance: (prev.depositBalance || 0) + amount,
         pointBalance: (prev.pointBalance || 0) + refereeBonus + depositBonus,
         bonusEligible: storeSettings.gachaEnabled !== false && amount >= 10000 ? true : prev.bonusEligible,
@@ -465,7 +500,13 @@ export default function App() {
       };
     });
 
-    await recordStats({ cash: amount, point: issuedPoints });
+    await recordStats({
+      cash: amount,
+      points: {
+        [weatherUsed ? "weather" : "depositBonus"]: issuedDeposit,
+        referral: issuedReferral,
+      },
+    });
 
     // If a referral bonus was just triggered, also credit the referrer —
     // this is a separate account, so it's a second, independent update.
@@ -482,6 +523,7 @@ export default function App() {
                 ts: Date.now(),
                 summary: `お友達紹介ボーナス+${storeSettings.referralReferrerRate}%`,
                 kind: "point",
+                category: "referral",
                 point: referrerBonus,
                 total: referrerBonus,
                 items: [{ label: "お友達紹介ボーナス(紹介した方)", amount: referrerBonus }],
@@ -489,7 +531,7 @@ export default function App() {
                 ...(prev.history || []),
             ],
           }));
-          await recordStats({ point: referrerBonus });
+          await recordStats({ points: { referral: referrerBonus } });
         } catch (e) {
           // If the referrer's account is blacklisted/suspended/deleted, just
           // skip their bonus rather than failing the referee's charge.
@@ -501,11 +543,11 @@ export default function App() {
   const computePurchasePoints = (amount) => {
     if (!storeSettings.purchasePointEnabled) return 0;
     if (storeSettings.purchasePointFlatMode) {
-      return Math.round(amount * ((storeSettings.purchasePointFlatRate || 0) / 100));
+      return Math.round(amount * (clampRate(storeSettings.purchasePointFlatRate) / 100));
     }
     const tiers = storeSettings.purchasePointTiers || [];
     const tier = tiers.find((t) => t.upTo === null || amount <= t.upTo) || tiers[tiers.length - 1];
-    return tier ? Math.round(amount * ((tier.rate || 0) / 100)) : 0;
+    return tier ? Math.round(amount * (clampRate(tier.rate) / 100)) : 0;
   };
 
   const handleDeduct = async (amount, customerId) => {
@@ -547,6 +589,7 @@ export default function App() {
           ts: Date.now(),
           summary: "購入ポイント付与",
           kind: "purchasePoint",
+          category: "purchase",
           point: earnedPoints,
           total: earnedPoints,
           items: [{ label: "購入ポイント", amount: earnedPoints }],
@@ -559,7 +602,7 @@ export default function App() {
         history,
       };
     });
-    await recordStats({ point: issuedPoints });
+    await recordStats({ points: { purchase: issuedPoints } });
     return result;
   };
 
@@ -626,18 +669,31 @@ export default function App() {
     if (!myCustomerId) return;
     let issuedPoints = 0;
     await applyToAccount(myCustomerId, (prev) => {
-      const bonus = Math.round((prev.depositBalance || 0) * (rate / 100));
+      const today = dayKey();
+      const daily =
+        prev.dailyBonus?.date === today
+          ? { ...prev.dailyBonus }
+          : { date: today, depositCount: 0, gachaCount: 0 };
+      const gachaLimit = Math.max(1, storeSettings.gachaDailyLimit ?? 1);
+      if ((daily.gachaCount || 0) >= gachaLimit) {
+        // 今日はもう回せる回数を使い切っている
+        return { ...prev, bonusEligible: false };
+      }
+      daily.gachaCount = (daily.gachaCount || 0) + 1;
+      const bonus = Math.round((prev.depositBalance || 0) * (clampRate(rate) / 100));
       issuedPoints = bonus;
       return {
         ...prev,
         pointBalance: (prev.pointBalance || 0) + bonus,
         bonusEligible: false,
+        dailyBonus: daily,
         history: [
           {
             date: "今日",
             ts: Date.now(),
             summary: `ガチャボーナス+${rate}%`,
             kind: "point",
+            category: "gacha",
             point: bonus,
             total: bonus,
             items: [{ label: `ガチャボーナス(${rate}%)`, amount: bonus }],
@@ -646,7 +702,7 @@ export default function App() {
         ],
       };
     });
-    await recordStats({ point: issuedPoints });
+    await recordStats({ points: { gacha: issuedPoints } });
   };
 
   const confirmSetup = () => {
