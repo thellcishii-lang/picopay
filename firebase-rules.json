@@ -43,6 +43,16 @@
     "weather": {
       ".read": true,
       ".write": false
+    },
+    "transactions": {
+      ".read": "auth != null && auth.token.email != null",
+      "$customerId": {
+        ".read": "auth != null && (auth.token.email != null || auth.token.phone_number == root.child('accounts').child($customerId).child('profile/phone').val())",
+        ".write": "auth != null && (auth.token.email != null || auth.token.phone_number == root.child('accounts').child($customerId).child('profile/phone').val())",
+        "$txId": {
+          ".validate": "newData.hasChild('ts')"
+        }
+      }
     }
   }
 }
