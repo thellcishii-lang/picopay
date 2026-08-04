@@ -239,6 +239,8 @@ export async function listCustomers() {
     phone: acc.profile?.phone || null,
     email: acc.profile?.email || null,
     balance: (acc.pointBalance || 0) + (acc.depositBalance || 0),
+    pointBalance: acc.pointBalance || 0,
+    depositBalance: acc.depositBalance || 0,
     notifyOptIn: acc.notifyOptIn || null,
     pushTokens: acc.pushTokens || [],
   }));
@@ -312,4 +314,28 @@ export async function recordStats({ cash = 0, point = 0 }) {
 export async function getStats() {
   const snapshot = await get(ref(db, "stats"));
   return snapshot.val() || {};
+}
+
+// Flattens every customer's history into one list for the 集計 screen.
+// This reads the whole accounts node, which is why it only runs when the
+// store actually opens the transaction list — never on the dashboard.
+// Entries written before timestamps existed are skipped: without a date
+// there's no way to say which term they belong to.
+export async function listTransactions({ termKey = null, nameQuery = "" } = {}) {
+  const snapshot = await get(ref(db, "accounts"));
+  const data = snapshot.val() || {};
+  const rows = [];
+  for (const [id, acc] of Object.entries(data)) {
+    const name = acc.profile?.name || "(名前未登録)";
+    if (nameQuery && !name.includes(nameQuery) && !id.includes(nameQuery)) continue;
+    for (const h of acc.history || []) {
+      if (!h.ts) continue;
+      // 購入ポイントはお会計の行に付与ポイントとして出るので、単独では出さない
+      if (h.kind === "purchasePoint") continue;
+      if (termKey && termKeyOf(new Date(h.ts)) !== termKey) continue;
+      rows.push({ ...h, customerId: id, customerName: name });
+    }
+  }
+  rows.sort((a, b) => b.ts - a.ts);
+  return rows;
 }
