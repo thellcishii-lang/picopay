@@ -1437,9 +1437,7 @@ function CustomerRegistration({ onDone, onRegister, existingCustomers }) {
 }
 
 // ---------------- CUSTOMER DATA EXPORT ----------------
-function exportCustomersCsv(customers) {
-  const header = ["お客様ID", "お名前", "残高合計"];
-  const rows = customers.map((c) => [c.id, c.name, c.balance]);
+function downloadCsv(filename, header, rows) {
   const csv = [header, ...rows]
     .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
     .join("\r\n");
@@ -1448,9 +1446,17 @@ function exportCustomersCsv(customers) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `picopay-customers-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function exportCustomersCsv(customers) {
+  downloadCsv(
+    `picopay-customers-${new Date().toISOString().slice(0, 10)}.csv`,
+    ["お客様ID", "お名前", "残高合計"],
+    customers.map((c) => [c.id, c.name, c.balance])
+  );
 }
 
 function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermanently, onDeleted, onReissue }) {
@@ -2578,6 +2584,311 @@ function StoreBrandingSettings({ storeSettings, onSave }) {
   );
 }
 
+
+// ---------------- 各種集計 ----------------
+// Terms follow the prepaid-instrument reference dates: 前期 4/1–9/30,
+// 後期 10/1–3/31. Kept in this file (rather than imported) so the screen
+// renders without reaching into the database layer.
+function termKeyOfDate(date) {
+  const y = date.getFullYear();
+  const m = date.getMonth() + 1;
+  if (m >= 4 && m <= 9) return `${y}-H1`;
+  if (m >= 10) return `${y}-H2`;
+  return `${y - 1}-H2`;
+}
+
+function termLabelOf(key) {
+  const [y, half] = key.split("-");
+  const year = Number(y);
+  return half === "H1"
+    ? `${year}/4/1〜${year}/9/30`
+    : `${year}/10/1〜${year + 1}/3/31`;
+}
+
+function formatDateTime(ts) {
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+const PAGE_SIZE = 50;
+
+function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onBack }) {
+  const currentTerm = termKeyOfDate(new Date());
+  const termKeys = Object.keys(stats.terms || {});
+  if (!termKeys.includes(currentTerm)) termKeys.push(currentTerm);
+  termKeys.sort().reverse();
+
+  const [showAllTerms, setShowAllTerms] = useState(false);
+  const [showTx, setShowTx] = useState(false);
+  const [txTerm, setTxTerm] = useState(currentTerm);
+  const [nameQuery, setNameQuery] = useState("");
+  const [rows, setRows] = useState([]);
+  const [visible, setVisible] = useState(PAGE_SIZE);
+  const [loading, setLoading] = useState(false);
+
+  const depositTotal = customers.reduce((sum, c) => sum + (c.depositBalance || 0), 0);
+  const pointTotal = customers.reduce((sum, c) => sum + (c.pointBalance || 0), 0);
+
+  const loadTx = async (term, query) => {
+    setLoading(true);
+    try {
+      const result = await onLoadTransactions({ termKey: term, nameQuery: query });
+      setRows(result);
+      setVisible(PAGE_SIZE);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const openTx = () => {
+    setShowTx(true);
+    if (rows.length === 0) loadTx(txTerm, nameQuery);
+  };
+
+  const shownTerms = showAllTerms ? termKeys : termKeys.slice(0, 6);
+
+  // Exports everything currently loaded (the whole filtered term), not just
+  // the 50 rows on screen — otherwise the file would silently be partial.
+  const exportTxCsv = () => {
+    downloadCsv(
+      `picopay-transactions-${txTerm}.csv`,
+      [
+        "日時",
+        "お客様ID",
+        "お名前",
+        "種別",
+        "お会計総額",
+        "預かり金から充当",
+        "ポイントから充当",
+        "チャージ額",
+        "付与ポイント",
+        "摘要",
+      ],
+      rows.map((r) => [
+        formatDateTime(r.ts),
+        r.customerId,
+        r.customerName,
+        r.kind === "payment" ? "お会計" : r.kind === "charge" ? "チャージ" : "ポイント付与",
+        r.kind === "payment" ? r.gross || 0 : "",
+        r.kind === "payment" ? r.depositUsed || 0 : "",
+        r.kind === "payment" ? r.pointUsed || 0 : "",
+        r.kind === "charge" ? r.cash || 0 : "",
+        r.kind === "payment" ? r.earned || 0 : r.point || 0,
+        r.summary || "",
+      ])
+    );
+  };
+
+  // Term totals are small, so this one needs no loading step.
+  const exportTermsCsv = () => {
+    downloadCsv(
+      `picopay-terms-${new Date().toISOString().slice(0, 10)}.csv`,
+      ["期間", "チャージ(預かり金)", "ポイント発行"],
+      termKeys.map((k) => {
+        const t = (stats.terms || {})[k] || {};
+        return [termLabelOf(k), t.cash || 0, t.point || 0];
+      })
+    );
+  };
+
+  const Card = ({ title, children }) => (
+    <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+      <div className="text-sm font-bold" style={{ color: C.ink }}>{title}</div>
+      {children}
+    </div>
+  );
+
+  const Row = ({ label, value, sub }) => (
+    <div className="mt-2 flex items-baseline justify-between">
+      <span className="text-[12px]" style={{ color: C.mute }}>{label}</span>
+      <span className="text-sm font-bold" style={{ color: sub ? C.mute : C.ink }}>{value}</span>
+    </div>
+  );
+
+  return (
+    <div className="max-w-md mx-auto px-4 pb-10">
+      <button
+        onClick={onBack}
+        className="mt-4 flex items-center gap-1 text-[12px] font-semibold"
+        style={{ color: C.mute }}
+      >
+        <ChevronLeft size={14} /> 設定に戻る
+      </button>
+
+      <div className="mt-2 text-lg font-bold" style={{ color: C.ink }}>各種集計</div>
+
+      <Card title="累計(ご利用開始から)">
+        <div className="text-[11px] mt-1" style={{ color: C.mute }}>
+          開始日:{stats.startedAt ? formatDateTime(stats.startedAt).split(" ")[0] : "—"}
+        </div>
+        <Row label="累計チャージ(預かり金)" value={`¥${(stats.cashTotal || 0).toLocaleString()}`} />
+        <Row label="累計ポイント発行" value={`P${(stats.pointTotal || 0).toLocaleString()}`} />
+      </Card>
+
+      <Card title="現在の残高">
+        <Row label="預かり残高の合計" value={`¥${depositTotal.toLocaleString()}`} />
+        <Row label="未使用ポイントの合計" value={`P${pointTotal.toLocaleString()}`} />
+        <div className="mt-2 text-[10px]" style={{ color: C.mute }}>
+          ※財務局への届出判定に使うのは、預かり残高の合計です
+        </div>
+      </Card>
+
+      <Card title="期別">
+        <div className="mt-1 space-y-2">
+          {shownTerms.map((key) => {
+            const t = (stats.terms || {})[key] || {};
+            return (
+              <div key={key} className="rounded-xl p-3" style={{ background: C.cream }}>
+                <div className="flex items-center justify-between">
+                  <span className="text-[12px] font-semibold" style={{ color: C.ink }}>
+                    {termLabelOf(key)}
+                  </span>
+                  {key === currentTerm && (
+                    <span className="text-[10px] font-bold" style={{ color: C.coral }}>今期</span>
+                  )}
+                </div>
+                <div className="mt-1 flex justify-between text-[11px]" style={{ color: C.mute }}>
+                  <span>チャージ ¥{(t.cash || 0).toLocaleString()}</span>
+                  <span>ポイント発行 P{(t.point || 0).toLocaleString()}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <button
+          onClick={exportTermsCsv}
+          className="mt-2 w-full rounded-lg py-2 text-[11px] font-semibold"
+          style={{ background: C.cream, color: C.teal }}
+        >
+          期別集計をCSV出力
+        </button>
+        {termKeys.length > 6 && (
+          <button
+            onClick={() => setShowAllTerms(!showAllTerms)}
+            className="mt-2 w-full rounded-lg py-2 text-[11px] font-semibold"
+            style={{ background: C.cream, color: C.mute }}
+          >
+            {showAllTerms ? "直近6期だけ表示" : `それ以前も表示(全${termKeys.length}期)`}
+          </button>
+        )}
+      </Card>
+
+      <Card title="取引履歴">
+        {!showTx ? (
+          <button
+            onClick={openTx}
+            className="mt-2 w-full rounded-full py-2.5 text-sm font-bold"
+            style={{ background: C.teal, color: "#fff" }}
+          >
+            取引履歴を表示
+          </button>
+        ) : (
+          <>
+            <div className="mt-2 flex gap-2">
+              <select
+                value={txTerm}
+                onChange={(e) => {
+                  setTxTerm(e.target.value);
+                  loadTx(e.target.value, nameQuery);
+                }}
+                className="flex-1 rounded-lg px-2 py-2 text-[11px] outline-none"
+                style={{ background: C.cream, color: C.ink }}
+              >
+                {termKeys.map((k) => (
+                  <option key={k} value={k}>{termLabelOf(k)}</option>
+                ))}
+              </select>
+            </div>
+            <div className="mt-2 flex gap-2">
+              <input
+                value={nameQuery}
+                onChange={(e) => setNameQuery(e.target.value)}
+                placeholder="お客様名で絞り込み"
+                className="flex-1 rounded-lg px-3 py-2 text-[12px] outline-none"
+                style={{ background: C.cream, color: C.ink }}
+              />
+              <button
+                onClick={() => loadTx(txTerm, nameQuery)}
+                className="rounded-lg px-4 text-[11px] font-semibold"
+                style={{ background: C.teal, color: "#fff" }}
+              >
+                絞り込む
+              </button>
+            </div>
+
+            {loading ? (
+              <div className="mt-4 text-center text-[12px]" style={{ color: C.mute }}>読み込み中…</div>
+            ) : rows.length === 0 ? (
+              <div className="mt-4 text-center text-[12px]" style={{ color: C.mute }}>
+                この期間の取引はまだありません
+              </div>
+            ) : (
+              <>
+                <div className="mt-3 flex items-center justify-between">
+                  <span className="text-[11px]" style={{ color: C.mute }}>{rows.length}件</span>
+                  <button
+                    onClick={exportTxCsv}
+                    className="rounded-lg px-3 py-1.5 text-[11px] font-semibold"
+                    style={{ background: C.cream, color: C.teal }}
+                  >
+                    CSV出力({rows.length}件すべて)
+                  </button>
+                </div>
+                <div className="mt-1 space-y-2">
+                  {rows.slice(0, visible).map((r, i) => (
+                    <div key={i} className="rounded-xl p-3" style={{ background: C.cream }}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px]" style={{ color: C.mute }}>{formatDateTime(r.ts)}</span>
+                        <span className="text-[12px] font-semibold" style={{ color: C.ink }}>{r.customerName}</span>
+                      </div>
+                      {r.kind === "payment" ? (
+                        <>
+                          <div className="mt-1 text-[12px] font-bold" style={{ color: C.ink }}>
+                            お会計 ¥{(r.gross || 0).toLocaleString()}
+                          </div>
+                          <div className="mt-0.5 text-[11px]" style={{ color: C.mute }}>
+                            預かり金 ¥{(r.depositUsed || 0).toLocaleString()} ／ ポイント P{(r.pointUsed || 0).toLocaleString()}
+                          </div>
+                          {r.earned > 0 && (
+                            <div className="text-[11px] font-semibold" style={{ color: C.coral }}>
+                              付与 P{r.earned.toLocaleString()}
+                            </div>
+                          )}
+                        </>
+                      ) : r.kind === "charge" ? (
+                        <div className="mt-1 text-[12px] font-bold" style={{ color: C.ink }}>
+                          チャージ ¥{(r.cash || 0).toLocaleString()}
+                        </div>
+                      ) : (
+                        <div className="mt-1 text-[12px] font-bold" style={{ color: C.ink }}>
+                          {r.summary}
+                          {r.point > 0 && (
+                            <span style={{ color: C.coral }}> P{r.point.toLocaleString()}</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {visible < rows.length && (
+                  <button
+                    onClick={() => setVisible((v) => v + PAGE_SIZE)}
+                    className="mt-2 w-full rounded-lg py-2 text-[11px] font-semibold"
+                    style={{ background: C.cream, color: C.mute }}
+                  >
+                    もっと見る(残り{rows.length - visible}件)
+                  </button>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 // ---------------- SIGN OUT ----------------
 // Lives at the very bottom of the settings tab rather than floating on every
 // screen — signing out is rare, and having it always visible invited misclicks.
@@ -2622,8 +2933,9 @@ function SignOutButton({ onSignOut }) {
   );
 }
 
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, storeSettings = {}, onSaveStoreSettings, onSendPush, onSignOut, stats = {} }) {
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, storeSettings = {}, onSaveStoreSettings, onSendPush, onSignOut, stats = {}, onLoadTransactions }) {
   const [tab, setTab] = useState("dashboard");
+  const [showAggregate, setShowAggregate] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
@@ -2634,6 +2946,21 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [tab]);
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [showAggregate]);
+
+  if (showAggregate) {
+    return (
+      <AggregateScreen
+        stats={stats}
+        customers={customers}
+        onLoadTransactions={onLoadTransactions}
+        onBack={() => setShowAggregate(false)}
+      />
+    );
+  }
 
   return (
     <div className="max-w-md mx-auto px-4 pb-24">
@@ -2839,6 +3166,13 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
           <SystemSafetySettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <WeatherCampaignSettings weatherEnabled={weatherEnabled} setWeatherEnabled={setWeatherEnabled} storeSettings={storeSettings} onSave={onSaveStoreSettings} />
           <StoreBrandingSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+          <button
+            onClick={() => setShowAggregate(true)}
+            className="mt-4 w-full rounded-2xl py-3 text-sm font-bold flex items-center justify-center gap-1"
+            style={{ background: C.paper, border: `1px solid ${C.line}`, color: C.teal }}
+          >
+            各種集計 <ChevronRight size={15} />
+          </button>
           <SignOutButton onSignOut={onSignOut} />
         </>
       )}
