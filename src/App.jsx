@@ -20,6 +20,8 @@ import {
   ensureStatsStarted,
   listTransactions,
   recordMissingSnapshots,
+  subscribeToWeather,
+  lookupWeatherArea,
   DEFAULT_ACCOUNT,
   auth,
   subscribeToAuth,
@@ -307,6 +309,8 @@ export default function App() {
   // Running totals for the dashboard. The start date is stamped on the first
   // store sign-in, so everything shown is "since the store began using this".
   const [stats, setStats] = useState({});
+  const [weather, setWeather] = useState({});
+  useEffect(() => subscribeToWeather(setWeather), []);
   const refreshStats = useCallback(async () => {
     setStats(await getStats());
   }, []);
@@ -755,6 +759,8 @@ export default function App() {
               onSignOut={storeSignOut}
               stats={stats}
               onLoadTransactions={listTransactions}
+              weather={weather}
+              onLookupArea={lookupWeatherArea}
             />
           </>
         )
