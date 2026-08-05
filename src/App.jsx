@@ -1,14 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import ModeTopBar from "./TopBar.jsx";
-import { C, StoreView, CustomerView, PICO_PLACEHOLDER, resolveBrandImage, clampRate } from "./components.jsx";
+import { C, StoreView, CustomerView, PICO_PLACEHOLDER, resolveBrandImage } from "./components.jsx";
 import {
   subscribeToAccount,
   subscribeToAccountTransactions,
   listAccountTransactions,
-  appendTransactions,
   getAccountOnce,
-  getAccountVerificationInfo,
-  saveAccount,
+  updateNotifyPrefs,
   createAccount,
   listCustomers,
   getStoreSettings,
@@ -18,9 +16,12 @@ import {
   reissueCustomerAccess,
   requestPushToken,
   sendPushNotification,
-  recordStats,
   getStats,
   ensureStatsStarted,
+  chargeAccount,
+  payFromAccount,
+  spinGacha,
+  fetchVerificationInfo,
   listTransactions,
   recordMissingSnapshots,
   subscribeToWeather,
@@ -28,6 +29,10 @@ import {
   setCurrentStore,
   resolveStoreForAdmin,
   resolveStoreForCustomer,
+  subscribeToRoles,
+  saveRole,
+  deleteRole,
+  verifyRolePassword,
   DEFAULT_ACCOUNT,
   auth,
   subscribeToAuth,
@@ -258,8 +263,9 @@ export default function App() {
   // needs it to edit, customer needs it to render their own header).
   const [storeSettings, setStoreSettingsState] = useState({});
   useEffect(() => {
+    if (!storeId) return;
     getStoreSettings().then(setStoreSettingsState);
-  }, [mode]);
+  }, [mode, storeId]);
 
   // rankingEnabled/weatherEnabled used to be local, per-device state, which
   // meant toggling them in store settings never actually reached the
@@ -321,6 +327,25 @@ export default function App() {
   // store sign-in, so everything shown is "since the store began using this".
   const [stats, setStats] = useState({});
   const [weather, setWeather] = useState({});
+  // What the person at the till is currently allowed to do. Starts at other1
+  // (no password) every time the app opens, and drops back after 30 minutes
+  // so a till left unattended doesn't stay unlocked.
+  const [roles, setRoles] = useState({});
+  const [activeRole, setActiveRole] = useState("other1");
+  useEffect(() => {
+    if (!storeId) return;
+    return subscribeToRoles(setRoles);
+  }, [storeId]);
+  useEffect(() => {
+    if (activeRole === "other1") return;
+    const timer = setTimeout(() => setActiveRole("other1"), 30 * 60 * 1000);
+    return () => clearTimeout(timer);
+  }, [activeRole]);
+
+  const permissions =
+    activeRole === "owner"
+      ? { blacklist: true, deleteCustomer: true, settingsBasic: true, settingsFull: true, aggregate: true, owner: true }
+      : roles[activeRole] || {};
   useEffect(() => {
     if (!storeId) return;
     return subscribeToWeather(setWeather);
@@ -366,35 +391,6 @@ export default function App() {
     await refreshCustomers();
   };
 
-  // A store device charges/deducts whichever customer it just scanned — it
-  // doesn't hold a live subscription to any one account, just does a
-  // one-off read-modify-write each time.
-  const applyToAccount = async (customerId, updater) => {
-    const current = await getAccountOnce(customerId);
-    if (current.status && current.status !== "active") {
-      throw new Error(
-        current.status === "blacklisted"
-          ? "このお客様はブラックリスト登録されているため、決済できません"
-          : "このお客様は現在一時停止中のため、決済できません"
-      );
-    }
-    const next = updater(current);
-    await saveAccount(customerId, next);
-    refreshCustomers();
-    refreshStats();
-    return next;
-  };
-
-  // For the customer updating their own profile (e.g. notification
-  // preferences) — no store-side customer-list refresh needed here, and a
-  // suspended/blacklisted customer should still be able to change this.
-  const applyToOwnAccount = async (customerId, updater) => {
-    const current = await getAccountOnce(customerId);
-    const next = updater(current);
-    await saveAccount(customerId, next);
-    return next;
-  };
-
   const handleUpdateNotifyPrefs = async (customerId, prefs) => {
     let pushToken = null;
     if (prefs.push) {
@@ -405,14 +401,10 @@ export default function App() {
         // so nothing will actually be deliverable until they allow it.
       }
     }
-    await applyToOwnAccount(customerId, (prev) => {
-      const existingTokens = prev.pushTokens || [];
-      const nextTokens =
-        prefs.push && pushToken && !existingTokens.includes(pushToken)
-          ? [...existingTokens, pushToken]
-          : existingTokens;
-      return { ...prev, notifyOptIn: prefs, pushTokens: nextTokens };
-    });
+    // Only these two fields — the rules no longer allow writing a whole
+    // account from the browser, and rewriting it wholesale is how a balance
+    // could get clobbered by a stale copy anyway.
+    await updateNotifyPrefs(customerId, prefs, pushToken);
   };
 
   const handleSendPush = async (tokens, body) => {
@@ -421,207 +413,20 @@ export default function App() {
     await sendPushNotification({ tokens, title, body });
   };
 
-  // Local calendar day, switching at midnight — used for the per-day bonus caps.
-  const dayKey = (d = new Date()) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-
-  const computeDepositBonus = (amount) => {
-    if (!storeSettings.depositBonusEnabled) return 0;
-    if (storeSettings.depositBonusFlatMode) {
-      return Math.round(amount * (clampRate(storeSettings.depositBonusFlatRate) / 100));
-    }
-    const tiers = storeSettings.depositBonusTiers || [];
-    const tier = tiers.find((t) => t.upTo === null || amount <= t.upTo) || tiers[tiers.length - 1];
-    return tier ? Math.round(amount * (clampRate(tier.rate) / 100)) : 0;
-  };
-
+  // Money never moves in the browser any more — these just tell the server
+  // what happened and let it work out the amounts from the store's settings.
   const handleCharge = async (amount, customerId) => {
     if (!customerId) return;
-    let issuedPoints = 0;
-    let issuedDeposit = 0;
-    let issuedReferral = 0;
-    let weatherUsed = false;
-    const entries = [];
-    const result = await applyToAccount(customerId, (prev) => {
-      // If this customer was referred and hasn't received their referral
-      // bonus yet, this first charge is what triggers both bonuses.
-      const giveReferralBonus =
-        storeSettings.referralEnabled && prev.referredBy && !prev.referralBonusGiven;
-      const refereeBonus = giveReferralBonus
-        ? Math.round(amount * ((storeSettings.referralRefereeRate || 0) / 100))
-        : 0;
-      // 雨の日ボーナスは入金ボーナスと同じ枠。どちらか一方だけが付き、
-      // 使い切ったらその日は以降のチャージにボーナスが付かない。
-      const today = dayKey();
-      const daily =
-        prev.dailyBonus?.date === today
-          ? { ...prev.dailyBonus }
-          : { date: today, depositCount: 0, gachaCount: 0 };
-      const depositLimit = Math.max(1, storeSettings.depositBonusDailyLimit ?? 1);
-      const weatherActive =
-        storeSettings.weatherEnabled !== false && storeSettings.weatherActiveDate === today;
-
-      let depositBonus = 0;
-      let bonusLabel = "入金ボーナス";
-      if ((daily.depositCount || 0) < depositLimit) {
-        if (weatherActive) {
-          const base = Math.min(amount, storeSettings.weatherCap ?? amount);
-          depositBonus = Math.round(base * (clampRate(storeSettings.weatherRate) / 100));
-          bonusLabel = "雨の日ボーナス";
-        } else {
-          depositBonus = computeDepositBonus(amount);
-        }
-        if (depositBonus > 0) daily.depositCount = (daily.depositCount || 0) + 1;
-      }
-      entries.push({
-        date: "今日",
-        ts: Date.now(),
-        summary: `チャージ ¥${amount.toLocaleString()}`,
-        kind: "charge",
-        cash: amount,
-        total: amount,
-        items: [{ label: "チャージ", amount }],
-      });
-      if (depositBonus > 0) {
-        entries.push({
-          date: "今日",
-          ts: Date.now(),
-          summary: bonusLabel,
-          kind: "point",
-          category: weatherActive ? "weather" : "depositBonus",
-          point: depositBonus,
-          total: depositBonus,
-          items: [{ label: bonusLabel, amount: depositBonus }],
-        });
-      }
-      if (refereeBonus > 0) {
-        entries.push({
-          date: "今日",
-          ts: Date.now(),
-          summary: `お友達紹介ボーナス+${storeSettings.referralRefereeRate}%`,
-          kind: "point",
-          category: "referral",
-          point: refereeBonus,
-          total: refereeBonus,
-          items: [{ label: "お友達紹介ボーナス(紹介された方)", amount: refereeBonus }],
-        });
-      }
-      issuedPoints = refereeBonus + depositBonus;
-      issuedDeposit = depositBonus;
-      issuedReferral = refereeBonus;
-      weatherUsed = weatherActive && depositBonus > 0;
-      return {
-        ...prev,
-        dailyBonus: daily,
-        depositBalance: (prev.depositBalance || 0) + amount,
-        pointBalance: (prev.pointBalance || 0) + refereeBonus + depositBonus,
-        bonusEligible: storeSettings.gachaEnabled !== false && amount >= 10000 ? true : prev.bonusEligible,
-        referralBonusGiven: giveReferralBonus ? true : prev.referralBonusGiven,
-      };
-    });
-    await appendTransactions(customerId, entries);
-
-    await recordStats({
-      cash: amount,
-      points: {
-        [weatherUsed ? "weather" : "depositBonus"]: issuedDeposit,
-        referral: issuedReferral,
-      },
-    });
-
-    // If a referral bonus was just triggered, also credit the referrer —
-    // this is a separate account, so it's a second, independent update.
-    if (storeSettings.referralEnabled && result.referredBy && result.referralBonusGiven) {
-      const referrerBonus = Math.round(amount * ((storeSettings.referralReferrerRate || 0) / 100));
-      if (referrerBonus > 0) {
-        try {
-          await applyToAccount(result.referredBy, (prev) => ({
-            ...prev,
-            pointBalance: (prev.pointBalance || 0) + referrerBonus,
-          }));
-          await appendTransactions(result.referredBy, [
-            {
-              date: "今日",
-              ts: Date.now(),
-              summary: `お友達紹介ボーナス+${storeSettings.referralReferrerRate}%`,
-              kind: "point",
-              category: "referral",
-              point: referrerBonus,
-              total: referrerBonus,
-              items: [{ label: "お友達紹介ボーナス(紹介した方)", amount: referrerBonus }],
-            },
-          ]);
-          await recordStats({ points: { referral: referrerBonus } });
-        } catch (e) {
-          // If the referrer's account is blacklisted/suspended/deleted, just
-          // skip their bonus rather than failing the referee's charge.
-        }
-      }
-    }
-  };
-
-  const computePurchasePoints = (amount) => {
-    if (!storeSettings.purchasePointEnabled) return 0;
-    if (storeSettings.purchasePointFlatMode) {
-      return Math.round(amount * (clampRate(storeSettings.purchasePointFlatRate) / 100));
-    }
-    const tiers = storeSettings.purchasePointTiers || [];
-    const tier = tiers.find((t) => t.upTo === null || amount <= t.upTo) || tiers[tiers.length - 1];
-    return tier ? Math.round(amount * (clampRate(tier.rate) / 100)) : 0;
+    await chargeAccount(customerId, amount);
+    refreshCustomers();
+    refreshStats();
   };
 
   const handleDeduct = async (amount, customerId) => {
     if (!customerId) return;
-    let issuedPoints = 0;
-    const entries = [];
-    const result = await applyToAccount(customerId, (prev) => {
-      let remaining = amount;
-      const usedPoints = Math.min(prev.pointBalance || 0, remaining);
-      remaining -= usedPoints;
-      const usedDeposit = Math.min(prev.depositBalance || 0, remaining);
-      const newDeposit = Math.max(0, (prev.depositBalance || 0) - remaining);
-      // "total" なら会計総額、既定の "deposit" なら預かり金から払った分だけが対象。
-      // 総額対象だと、ポイントで払った分にもポイントが付く。
-      const pointBase =
-        storeSettings.purchasePointBase === "total" ? amount : usedDeposit;
-      const earnedPoints = computePurchasePoints(pointBase);
-      issuedPoints = earnedPoints;
-      const items = [];
-      if (usedPoints > 0) items.push({ label: "お会計(ポイント消費分)", amount: -usedPoints });
-      if (usedDeposit > 0) items.push({ label: "お会計(預かり金消費分)", amount: -usedDeposit });
-      entries.push({
-        date: "今日",
-        ts: Date.now(),
-        summary: `お会計 -¥${amount.toLocaleString()}`,
-        kind: "payment",
-        gross: amount,
-        depositUsed: usedDeposit,
-        pointUsed: usedPoints,
-        earned: earnedPoints,
-        total: -amount,
-        items,
-      });
-      if (earnedPoints > 0) {
-        entries.push({
-          date: "今日",
-          ts: Date.now(),
-          summary: "購入ポイント付与",
-          kind: "purchasePoint",
-          category: "purchase",
-          point: earnedPoints,
-          total: earnedPoints,
-          items: [{ label: "購入ポイント", amount: earnedPoints }],
-        });
-      }
-      return {
-        ...prev,
-        pointBalance: (prev.pointBalance || 0) - usedPoints + earnedPoints,
-        depositBalance: newDeposit,
-      };
-    });
-    await appendTransactions(customerId, entries);
-    await recordStats({ points: { purchase: issuedPoints } });
-    return result;
+    await payFromAccount(customerId, amount);
+    refreshCustomers();
+    refreshStats();
   };
 
   const totalBalance = customers.reduce((s, c) => s + c.balance, 0);
@@ -680,7 +485,7 @@ export default function App() {
   // The phone number on file for this account, and whether verification is
   // required at all — fetched via a public, read-only lookup so we can
   // decide whether the gate is needed *before* the customer is
-  // authenticated (see getAccountVerificationInfo in firebase.js).
+  // authenticated (see fetchVerificationInfo in firebase.js).
   const [myPhone, setMyPhone] = useState(undefined); // undefined = not checked yet, null = no phone on file
   const [requireVerification, setRequireVerification] = useState(true);
   // Has this device's phone been verified against this account's phone yet?
@@ -689,7 +494,7 @@ export default function App() {
   useEffect(() => {
     if (mode !== "customer" || !myCustomerId || !storeId) return;
     let cancelled = false;
-    getAccountVerificationInfo(myCustomerId).then(({ phone, requireVerification }) => {
+    fetchVerificationInfo(myCustomerId).then(({ phone, requireVerification }) => {
       if (!cancelled) {
         setMyPhone(phone);
         setRequireVerification(requireVerification);
@@ -720,43 +525,10 @@ export default function App() {
     return () => unsubscribe();
   }, [mode, myCustomerId, phoneVerified, storeId]);
 
-  const handleUseBonusSpin = async (rate) => {
-    if (!myCustomerId) return;
-    let issuedPoints = 0;
-    const entries = [];
-    await applyToAccount(myCustomerId, (prev) => {
-      const today = dayKey();
-      const daily =
-        prev.dailyBonus?.date === today
-          ? { ...prev.dailyBonus }
-          : { date: today, depositCount: 0, gachaCount: 0 };
-      const gachaLimit = Math.max(1, storeSettings.gachaDailyLimit ?? 1);
-      if ((daily.gachaCount || 0) >= gachaLimit) {
-        // 今日はもう回せる回数を使い切っている
-        return { ...prev, bonusEligible: false };
-      }
-      daily.gachaCount = (daily.gachaCount || 0) + 1;
-      const bonus = Math.round((prev.depositBalance || 0) * (clampRate(rate) / 100));
-      issuedPoints = bonus;
-      entries.push({
-        date: "今日",
-        ts: Date.now(),
-        summary: `ガチャボーナス+${rate}%`,
-        kind: "point",
-        category: "gacha",
-        point: bonus,
-        total: bonus,
-        items: [{ label: `ガチャボーナス(${rate}%)`, amount: bonus }],
-      });
-      return {
-        ...prev,
-        pointBalance: (prev.pointBalance || 0) + bonus,
-        bonusEligible: false,
-        dailyBonus: daily,
-      };
-    });
-    await appendTransactions(myCustomerId, entries);
-    await recordStats({ points: { gacha: issuedPoints } });
+  // Returns the rate the server drew, so the wheel can land on it.
+  const handleUseBonusSpin = async () => {
+    if (!myCustomerId) return 0;
+    return await spinGacha(myCustomerId);
   };
 
   const confirmSetup = () => {
@@ -835,6 +607,17 @@ export default function App() {
               onLoadTransactions={listTransactions}
               weather={weather}
               onLookupArea={lookupWeatherArea}
+              roles={roles}
+              activeRole={activeRole}
+              permissions={permissions}
+              onVerifyRole={async (role, password) => {
+                const result = await verifyRolePassword(role, password);
+                setActiveRole(result.role);
+                return result;
+              }}
+              onExitRole={() => setActiveRole("other1")}
+              onSaveRole={saveRole}
+              onDeleteRole={deleteRole}
             />
           </>
         )
