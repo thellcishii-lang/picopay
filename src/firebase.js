@@ -30,6 +30,33 @@ const app = initializeApp(firebaseConfig);
 export const db = getDatabase(app);
 export const auth = getAuth(app);
 
+// ---- Which store are we looking at? ----
+// Every store's data lives under stores/<storeId>/. Rather than threading the
+// store id through every call site, it's resolved once at sign-in (staff) or
+// from the customer id (customer) and held here. `sref` builds a path inside
+// the current store; anything outside a store (the lookup indexes, the store
+// list) uses ref(db, ...) directly.
+let currentStoreId = null;
+
+export function setCurrentStore(storeId) {
+  currentStoreId = storeId;
+}
+
+export function getCurrentStore() {
+  return currentStoreId;
+}
+
+function sref(path = "") {
+  if (!currentStoreId) throw new Error("店舗が特定されていません");
+  return ref(db, path ? `stores/${currentStoreId}/${path}` : `stores/${currentStoreId}`);
+}
+
+// Path string for multi-location updates, which take paths from the root.
+function spath(path) {
+  if (!currentStoreId) throw new Error("店舗が特定されていません");
+  return `stores/${currentStoreId}/${path}`;
+}
+
 // ---- Push notifications (Web Push via Firebase Cloud Messaging) ----
 // Generated in Firebase console → Project settings → Cloud Messaging →
 // Web configuration → "Web Push certificates". This is safe to keep in
@@ -120,8 +147,8 @@ const DEFAULT_ACCOUNT = {
 // all for this account (store staff can turn it off per customer).
 export async function getAccountVerificationInfo(customerId) {
   const [phoneSnap, requireSnap] = await Promise.all([
-    get(ref(db, `accounts/${customerId}/profile/phone`)),
-    get(ref(db, `accounts/${customerId}/requireVerification`)),
+    get(sref(`accounts/${customerId}/profile/phone`)),
+    get(sref(`accounts/${customerId}/requireVerification`)),
   ]);
   return {
     phone: phoneSnap.val() || null,
@@ -134,7 +161,7 @@ export async function getAccountVerificationInfo(customerId) {
 // anywhere (this device, another device, the store, etc). Returns an
 // unsubscribe function.
 export function subscribeToAccount(customerId, callback) {
-  const accountRef = ref(db, `accounts/${customerId}`);
+  const accountRef = sref(`accounts/${customerId}`);
   const unsubscribe = onValue(accountRef, (snapshot) => {
     const data = snapshot.val();
     if (data) {
@@ -150,25 +177,29 @@ export function subscribeToAccount(customerId, callback) {
 
 // Read an account once (no live subscription) — useful for one-off store-side lookups.
 export async function getAccountOnce(customerId) {
-  const snapshot = await get(ref(db, `accounts/${customerId}`));
+  const snapshot = await get(sref(`accounts/${customerId}`));
   return snapshot.val() || DEFAULT_ACCOUNT;
 }
 
 // Overwrite the full account object for a customer.
 export async function saveAccount(customerId, account) {
-  await set(ref(db, `accounts/${customerId}`), account);
+  await set(sref(`accounts/${customerId}`), account);
 }
 
 // Set a customer's status: "active" | "blacklisted" | "suspended".
 // Blacklisted/suspended customers are blocked from transacting (checked at
 // scan time and shown on their own screen) but their data is kept.
 export async function setCustomerStatus(customerId, status) {
-  await update(ref(db, `accounts/${customerId}`), { status });
+  await update(sref(`accounts/${customerId}`), { status });
 }
 
 // Permanently and irreversibly delete a customer's account and all its data.
 export async function deleteCustomerPermanently(customerId) {
-  await remove(ref(db, `accounts/${customerId}`));
+  await update(ref(db), {
+    [spath(`accounts/${customerId}`)]: null,
+    [spath(`transactions/${customerId}`)]: null,
+    [`customerIndex/${customerId}`]: null,
+  });
 }
 
 // Re-issue access for a customer who lost their phone or changed their
@@ -179,13 +210,13 @@ export async function deleteCustomerPermanently(customerId) {
 // the profile so future SMS verification checks against the new number.
 export async function reissueCustomerAccess({ customerId, newPhone, idPhotoDataUrl }) {
   if (idPhotoDataUrl) {
-    await set(ref(db, `idPhotos/${customerId}`), {
+    await set(sref(`idPhotos/${customerId}`), {
       dataUrl: idPhotoDataUrl,
       verifiedAt: Date.now(),
     });
   }
   if (newPhone) {
-    await update(ref(db, `accounts/${customerId}/profile`), { phone: newPhone });
+    await update(sref(`accounts/${customerId}/profile`), { phone: newPhone });
   }
 }
 
@@ -209,13 +240,18 @@ export async function createAccount({ name, phone, email, requireVerification = 
     referredBy: referredBy || null,
     referralBonusGiven: false,
   };
-  await set(ref(db, `accounts/${customerId}`), account);
+  await update(ref(db), {
+    [spath(`accounts/${customerId}`)]: account,
+    // Without this the fixed customer URL can't tell which store the id
+    // belongs to.
+    [`customerIndex/${customerId}`]: currentStoreId,
+  });
   return customerId;
 }
 
 // List all registered customers (for the store's customer list screen).
 export async function listCustomers() {
-  const snapshot = await get(ref(db, "accounts"));
+  const snapshot = await get(sref("accounts"));
   const data = snapshot.val() || {};
   return Object.entries(data).map(([id, acc]) => ({
     id,
@@ -236,12 +272,12 @@ export { DEFAULT_ACCOUNT };
 // Branding (logo/icon/store name), the customer-side hero image, and other
 // store-wide configuration the store sets once and every device reads.
 export async function getStoreSettings() {
-  const snapshot = await get(ref(db, "storeSettings"));
+  const snapshot = await get(sref("storeSettings"));
   return snapshot.val() || {};
 }
 
 export async function saveStoreSettings(settings) {
-  await update(ref(db, "storeSettings"), settings);
+  await update(sref("storeSettings"), settings);
 }
 
 
@@ -274,8 +310,8 @@ export function termLabel(key) {
 // Stamps the start date the first time the store signs in. Everything the
 // 集計 screen shows is "since this date".
 export async function ensureStatsStarted() {
-  const snap = await get(ref(db, "stats/startedAt"));
-  if (!snap.exists()) await set(ref(db, "stats/startedAt"), Date.now());
+  const snap = await get(sref("stats/startedAt"));
+  if (!snap.exists()) await set(sref("stats/startedAt"), Date.now());
 }
 
 // `cash` is money actually paid in (charges only — bonuses are never cash).
@@ -289,27 +325,27 @@ export async function recordStats({ cash = 0, points = {} }) {
   const term = termKeyOf();
   const updates = {};
   if (cash) {
-    updates["stats/cashTotal"] = increment(cash);
-    updates[`stats/terms/${term}/cash`] = increment(cash);
+    updates[spath("stats/cashTotal")] = increment(cash);
+    updates[spath(`stats/terms/${term}/cash`)] = increment(cash);
   }
   let pointTotal = 0;
   for (const key of POINT_CATEGORIES) {
     const value = points[key] || 0;
     if (!value) continue;
     pointTotal += value;
-    updates[`stats/points/${key}`] = increment(value);
-    updates[`stats/terms/${term}/points/${key}`] = increment(value);
+    updates[spath(`stats/points/${key}`)] = increment(value);
+    updates[spath(`stats/terms/${term}/points/${key}`)] = increment(value);
   }
   if (pointTotal) {
-    updates["stats/pointTotal"] = increment(pointTotal);
-    updates[`stats/terms/${term}/point`] = increment(pointTotal);
+    updates[spath("stats/pointTotal")] = increment(pointTotal);
+    updates[spath(`stats/terms/${term}/point`)] = increment(pointTotal);
   }
   if (Object.keys(updates).length === 0) return;
   await update(ref(db), updates);
 }
 
 export async function getStats() {
-  const snapshot = await get(ref(db, "stats"));
+  const snapshot = await get(sref("stats"));
   return snapshot.val() || {};
 }
 
@@ -322,8 +358,8 @@ export async function listTransactions({ termKey = null, nameQuery = "" } = {}) 
   // Two reads instead of one: the accounts node (small — names and balances
   // only) and the transactions node. Only the 集計 screen calls this.
   const [accountsSnap, txSnap] = await Promise.all([
-    get(ref(db, "accounts")),
-    get(ref(db, "transactions")),
+    get(sref("accounts")),
+    get(sref("transactions")),
   ]);
   const accounts = accountsSnap.val() || {};
   const byCustomer = txSnap.val() || {};
@@ -373,7 +409,7 @@ export async function recordMissingSnapshots() {
   const missing = due.filter((k) => !(stats.snapshots || {})[k]);
   if (missing.length === 0) return;
 
-  const accountsSnap = await get(ref(db, "accounts"));
+  const accountsSnap = await get(sref("accounts"));
   const accounts = accountsSnap.val() || {};
   let deposit = 0;
   let point = 0;
@@ -385,7 +421,7 @@ export async function recordMissingSnapshots() {
   const updates = {};
   for (const key of missing) {
     const term = (stats.terms || {})[key] || {};
-    updates[`stats/snapshots/${key}`] = {
+    updates[spath(`stats/snapshots/${key}`)] = {
       at: Date.now(),
       date: null,
       deposit,
@@ -402,7 +438,7 @@ export async function recordMissingSnapshots() {
 // here — the browser never calls 気象庁 directly, so every device shows the
 // same number and the forecast isn't fetched once per open tab.
 export function subscribeToWeather(callback) {
-  return onValue(ref(db, "weather"), (snapshot) => callback(snapshot.val() || {}));
+  return onValue(sref("weather"), (snapshot) => callback(snapshot.val() || {}));
 }
 
 // Resolves a postal code to a 気象庁 forecast area. Runs only when the store
@@ -438,8 +474,8 @@ export async function appendTransactions(customerId, entries) {
   if (!entries || entries.length === 0) return;
   const updates = {};
   for (const entry of entries) {
-    const key = push(ref(db, `transactions/${customerId}`)).key;
-    updates[`transactions/${customerId}/${key}`] = entry;
+    const key = push(sref(`transactions/${customerId}`)).key;
+    updates[spath(`transactions/${customerId}/${key}`)] = entry;
   }
   await update(ref(db), updates);
 }
@@ -448,7 +484,7 @@ export async function appendTransactions(customerId, entries) {
 // asks for a page at a time rather than the whole history.
 export async function listAccountTransactions(customerId, limit = 50) {
   const snapshot = await get(
-    query(ref(db, `transactions/${customerId}`), orderByChild("ts"), limitToLast(limit))
+    query(sref(`transactions/${customerId}`), orderByChild("ts"), limitToLast(limit))
   );
   const rows = [];
   snapshot.forEach((child) => {
@@ -460,7 +496,7 @@ export async function listAccountTransactions(customerId, limit = 50) {
 // Live version for the customer's own screen, capped the same way.
 export function subscribeToAccountTransactions(customerId, callback, limit = 50) {
   return onValue(
-    query(ref(db, `transactions/${customerId}`), orderByChild("ts"), limitToLast(limit)),
+    query(sref(`transactions/${customerId}`), orderByChild("ts"), limitToLast(limit)),
     (snapshot) => {
       const rows = [];
       snapshot.forEach((child) => {
@@ -470,3 +506,25 @@ export function subscribeToAccountTransactions(customerId, callback, limit = 50)
     }
   );
 }
+
+// ---- Store lookup and creation ----
+// Two indexes sit outside the per-store data, because they're what tells you
+// which store to look in:
+//   storeAdmins/<uid>       → the store a signed-in staff member belongs to
+//   customerIndex/<custId>  → the store a customer belongs to
+// The customer index is what lets one fixed URL serve every store: the QR
+// carries the customer id, and the id resolves the store.
+
+export async function resolveStoreForAdmin(uid) {
+  const snapshot = await get(ref(db, `storeAdmins/${uid}`));
+  return snapshot.val() || null;
+}
+
+export async function resolveStoreForCustomer(customerId) {
+  const snapshot = await get(ref(db, `customerIndex/${customerId}`));
+  return snapshot.val() || null;
+}
+
+// Store creation lives server-side (netlify/functions/create-store.js): it
+// has to create the staff login and write storeAdmins, and neither should be
+// possible from a browser.
