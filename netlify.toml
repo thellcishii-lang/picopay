@@ -14,3 +14,7 @@
 # その時刻が設定値と一致する時だけ配信する。
 [functions."weather-check"]
   schedule = "0 * * * *"
+
+# 全店舗の増分バックアップ。日本時間の深夜2時に実行。
+[functions."backup"]
+  schedule = "0 17 * * *"
