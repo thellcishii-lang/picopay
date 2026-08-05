@@ -13,6 +13,14 @@
 // The caller proves who they are with their Firebase ID token, which is
 // verified here — a shared secret wouldn't do, since anyone holding it could
 // top up any account in any store.
+//
+// Every account mutation runs inside a Realtime Database transaction()
+// rather than a plain read-then-write. Two devices hitting the same customer
+// at the same moment used to be able to clobber each other — both would read
+// the same starting balance, compute their own result, and whichever wrote
+// last would silently erase the other's change. transaction() re-runs the
+// update against whatever the value actually is at commit time, so both
+// operations land correctly regardless of ordering.
 const admin = require("firebase-admin");
 
 const DATABASE_URL =
@@ -25,6 +33,8 @@ if (!admin.apps.length) {
     databaseURL: DATABASE_URL,
   });
 }
+
+const increment = admin.database.ServerValue.increment;
 
 const MAX_RATE = 20;
 const clampRate = (v) => Math.min(MAX_RATE, Math.max(0, Number(v) || 0));
@@ -66,8 +76,8 @@ function computePurchasePoints(settings, base) {
 }
 
 // Store staff may act on any customer in their own store. A customer may only
-// act on their own account, and only for actions they're allowed to start
-// (the gacha spin) — never a charge or a sale.
+// act on their own account, and only to start the gacha spin — never a
+// charge, a sale, or a cancellation.
 async function authorize(idToken, storeId, customerId, action) {
   const decoded = await admin.auth().verifyIdToken(idToken);
   const db = admin.database();
@@ -91,78 +101,56 @@ function txEntry(fields) {
   return { date: "今日", ts: Date.now(), ...fields };
 }
 
-exports.handler = async (event) => {
-  if (event.httpMethod !== "POST") {
-    return { statusCode: 405, body: JSON.stringify({ error: "POSTで呼び出してください" }) };
-  }
+// ---- charge / payment / gacha ----
+// All three mutate exactly one account, so they share one shape: read
+// settings once (outside the race), then run the whole business-logic +
+// balance change inside a single transaction() on that account. Side effects
+// that aren't part of the account object itself (the transaction-history
+// entries to write, the stat totals to bump, a friendly error message) are
+// captured in `effects`, which the transaction body overwrites on every
+// invocation — since transaction() may re-run the callback under
+// contention, only the values from the attempt that actually committed are
+// ever read afterward.
+async function runAccountAction({ db, base, customerId, action, amount, settings }) {
+  const batchId = db.ref().push().key;
+  const today = dayKey();
+  const term = termKeyOf();
 
-  let body;
-  try {
-    body = JSON.parse(event.body || "{}");
-  } catch (e) {
-    return { statusCode: 400, body: JSON.stringify({ error: "リクエストの形式が不正です" }) };
-  }
+  let effects;
+  const accountRef = db.ref(`${base}/accounts/${customerId}`);
 
-  const { idToken, storeId, customerId, action, amount } = body;
-  if (!idToken || !storeId || !customerId || !action) {
-    return { statusCode: 400, body: JSON.stringify({ error: "入力が足りません" }) };
-  }
-
-  const db = admin.database();
-
-  try {
-    await authorize(idToken, storeId, customerId, action);
-
-    const base = `stores/${storeId}`;
-    const [accountSnap, settingsSnap] = await Promise.all([
-      db.ref(`${base}/accounts/${customerId}`).get(),
-      db.ref(`${base}/storeSettings`).get(),
-    ]);
-    const account = accountSnap.val();
-    const settings = settingsSnap.val() || {};
-
-    if (!account) {
-      return { statusCode: 404, body: JSON.stringify({ error: "お客様が見つかりません" }) };
+  const txResult = await accountRef.transaction((current) => {
+    effects = { entries: [], statPoints: {}, statCash: 0, rate: null, error: null, crossAccount: null };
+    if (!current) {
+      effects.error = "お客様が見つかりません";
+      return; // abort
     }
-    if (account.status && account.status !== "active") {
-      return {
-        statusCode: 403,
-        body: JSON.stringify({
-          error:
-            account.status === "blacklisted"
-              ? "このお客様はブラックリスト登録されているため、決済できません"
-              : "このお客様は現在一時停止中のため、決済できません",
-        }),
-      };
+    if (current.status && current.status !== "active") {
+      effects.error =
+        current.status === "blacklisted"
+          ? "このお客様はブラックリスト登録されているため、決済できません"
+          : "このお客様は現在一時停止中のため、決済できません";
+      return; // abort
     }
 
-    const today = dayKey();
     const daily =
-      account.dailyBonus && account.dailyBonus.date === today
-        ? { ...account.dailyBonus }
+      current.dailyBonus && current.dailyBonus.date === today
+        ? { ...current.dailyBonus }
         : { date: today, depositCount: 0, gachaCount: 0 };
-
-    const term = termKeyOf();
-    const entries = [];
-    const statPoints = {};
-    let statCash = 0;
-    const accountUpdates = {};
+    const next = { ...current };
 
     if (action === "charge") {
       const value = Math.floor(Number(amount) || 0);
       if (value <= 0) {
-        return { statusCode: 400, body: JSON.stringify({ error: "金額が不正です" }) };
+        effects.error = "金額が不正です";
+        return;
       }
-      // The daily cap is enforced here too — it was a setting with nothing
-      // behind it before.
       const cap = Number(settings.dailyChargeCap ?? 0);
       if (cap > 0) {
         const chargedToday = Number(daily.chargedAmount || 0);
         if (chargedToday + value > cap) {
-          return {
-            statusCode: 403,
-            body: JSON.stringify({ error: `1日のチャージ上限(¥${cap.toLocaleString()})を超えます` }),
-          };
+          effects.error = `1日のチャージ上限(¥${cap.toLocaleString()})を超えます`;
+          return;
         }
         daily.chargedAmount = chargedToday + value;
       }
@@ -184,89 +172,90 @@ exports.handler = async (event) => {
         if (bonus > 0) daily.depositCount = (daily.depositCount || 0) + 1;
       }
 
-      // Referral bonus for the person who was introduced, first charge only.
       let refereeBonus = 0;
       const giveReferral =
-        settings.referralEnabled && account.referredBy && !account.referralBonusGiven;
+        settings.referralEnabled && current.referredBy && !current.referralBonusGiven;
       if (giveReferral) {
         refereeBonus = Math.round(value * (clampRate(settings.referralRefereeRate) / 100));
       }
 
-      entries.push(
+      effects.entries.push(
         txEntry({
           summary: `チャージ ¥${value.toLocaleString()}`,
           kind: "charge",
           cash: value,
           total: value,
+          batchId,
           items: [{ label: "チャージ", amount: value }],
         })
       );
       if (bonus > 0) {
-        entries.push(
+        effects.entries.push(
           txEntry({
             summary: bonusLabel,
             kind: "point",
             category: weatherActive ? "weather" : "depositBonus",
             point: bonus,
             total: bonus,
+            batchId,
             items: [{ label: bonusLabel, amount: bonus }],
           })
         );
-        statPoints[weatherActive ? "weather" : "depositBonus"] = bonus;
+        effects.statPoints[weatherActive ? "weather" : "depositBonus"] = bonus;
       }
       if (refereeBonus > 0) {
-        entries.push(
+        effects.entries.push(
           txEntry({
             summary: `お友達紹介ボーナス+${clampRate(settings.referralRefereeRate)}%`,
             kind: "point",
             category: "referral",
             point: refereeBonus,
             total: refereeBonus,
+            batchId,
             items: [{ label: "お友達紹介ボーナス(紹介された方)", amount: refereeBonus }],
           })
         );
-        statPoints.referral = (statPoints.referral || 0) + refereeBonus;
+        effects.statPoints.referral = (effects.statPoints.referral || 0) + refereeBonus;
       }
 
-      statCash = value;
-      accountUpdates.depositBalance = (account.depositBalance || 0) + value;
-      accountUpdates.pointBalance = (account.pointBalance || 0) + bonus + refereeBonus;
-      accountUpdates.dailyBonus = daily;
-      if (giveReferral) accountUpdates.referralBonusGiven = true;
-      if (settings.gachaEnabled !== false && value >= 10000) accountUpdates.bonusEligible = true;
+      effects.statCash = value;
+      next.depositBalance = (current.depositBalance || 0) + value;
+      next.pointBalance = (current.pointBalance || 0) + bonus + refereeBonus;
+      next.dailyBonus = daily;
+      if (giveReferral) next.referralBonusGiven = true;
+      if (settings.gachaEnabled !== false && value >= 10000) next.bonusEligible = true;
 
-      // The referrer's own bonus lands on a different account.
-      if (giveReferral && account.referredBy) {
+      if (giveReferral && current.referredBy) {
         const referrerBonus = Math.round(value * (clampRate(settings.referralReferrerRate) / 100));
         if (referrerBonus > 0) {
-          const refRef = db.ref(`${base}/accounts/${account.referredBy}`);
-          const referrer = (await refRef.get()).val();
-          if (referrer && (!referrer.status || referrer.status === "active")) {
-            await refRef.update({ pointBalance: (referrer.pointBalance || 0) + referrerBonus });
-            await db.ref(`${base}/transactions/${account.referredBy}`).push(
-              txEntry({
-                summary: `お友達紹介ボーナス+${clampRate(settings.referralReferrerRate)}%`,
-                kind: "point",
-                category: "referral",
-                point: referrerBonus,
-                total: referrerBonus,
-                items: [{ label: "お友達紹介ボーナス(紹介した方)", amount: referrerBonus }],
-              })
-            );
-            statPoints.referral = (statPoints.referral || 0) + referrerBonus;
-          }
+          effects.crossAccount = {
+            accountId: current.referredBy,
+            pointDelta: referrerBonus,
+            entry: txEntry({
+              summary: `お友達紹介ボーナス+${clampRate(settings.referralReferrerRate)}%`,
+              kind: "point",
+              category: "referral",
+              point: referrerBonus,
+              total: referrerBonus,
+              batchId,
+              items: [{ label: "お友達紹介ボーナス(紹介した方)", amount: referrerBonus }],
+            }),
+          };
+          effects.statPoints.referral = (effects.statPoints.referral || 0) + referrerBonus;
         }
       }
     } else if (action === "payment") {
       const value = Math.floor(Number(amount) || 0);
       if (value <= 0) {
-        return { statusCode: 400, body: JSON.stringify({ error: "金額が不正です" }) };
+        effects.error = "金額が不正です";
+        return;
       }
-      const usedPoints = Math.min(account.pointBalance || 0, value);
+      const usedPoints = Math.min(current.pointBalance || 0, value);
       const remaining = value - usedPoints;
-      const usedDeposit = Math.min(account.depositBalance || 0, remaining);
+      const usedDeposit = Math.min(current.depositBalance || 0, remaining);
       if (usedPoints + usedDeposit < value) {
-        return { statusCode: 400, body: JSON.stringify({ error: "残高が足りません" }) };
+        effects.error = "残高が足りません";
+        return;
       }
 
       const pointBase = settings.purchasePointBase === "total" ? value : usedDeposit;
@@ -276,7 +265,7 @@ exports.handler = async (event) => {
       if (usedPoints > 0) items.push({ label: "お会計(ポイント消費分)", amount: -usedPoints });
       if (usedDeposit > 0) items.push({ label: "お会計(預かり金消費分)", amount: -usedDeposit });
 
-      entries.push(
+      effects.entries.push(
         txEntry({
           summary: `お会計 -¥${value.toLocaleString()}`,
           kind: "payment",
@@ -285,37 +274,42 @@ exports.handler = async (event) => {
           pointUsed: usedPoints,
           earned,
           total: -value,
+          batchId,
           items,
         })
       );
       if (earned > 0) {
-        entries.push(
+        effects.entries.push(
           txEntry({
             summary: "購入ポイント付与",
             kind: "purchasePoint",
             category: "purchase",
             point: earned,
             total: earned,
+            batchId,
             items: [{ label: "購入ポイント", amount: earned }],
           })
         );
-        statPoints.purchase = earned;
+        effects.statPoints.purchase = earned;
       }
 
-      accountUpdates.pointBalance = (account.pointBalance || 0) - usedPoints + earned;
-      accountUpdates.depositBalance = (account.depositBalance || 0) - usedDeposit;
+      next.pointBalance = (current.pointBalance || 0) - usedPoints + earned;
+      next.depositBalance = (current.depositBalance || 0) - usedDeposit;
     } else if (action === "gacha") {
-      if (!account.bonusEligible) {
-        return { statusCode: 403, body: JSON.stringify({ error: "ガチャを回せる状態ではありません" }) };
+      if (!current.bonusEligible) {
+        effects.error = "ガチャを回せる状態ではありません";
+        return;
       }
       const gachaLimit = Math.max(1, Number(settings.gachaDailyLimit ?? 1));
       if ((daily.gachaCount || 0) >= gachaLimit) {
-        await db.ref(`${base}/accounts/${customerId}`).update({ bonusEligible: false });
-        return { statusCode: 403, body: JSON.stringify({ error: "本日の回数を使い切っています" }) };
+        // Not an abort — the attempt is consumed either way, so the
+        // eligibility flag still needs clearing.
+        next.bonusEligible = false;
+        next.dailyBonus = daily;
+        effects.error = "本日の回数を使い切っています";
+        return next;
       }
 
-      // The winning rate is drawn here, not in the browser — otherwise the
-      // customer's device decides its own prize.
       const rows =
         (settings.weatherActiveDate === today ? settings.gachaRainRows : settings.gachaNormalRows) ||
         settings.gachaNormalRows ||
@@ -332,63 +326,319 @@ exports.handler = async (event) => {
           }
         }
       }
-      const bonus = Math.round((account.depositBalance || 0) * (rate / 100));
+      const bonus = Math.round((current.depositBalance || 0) * (rate / 100));
 
       daily.gachaCount = (daily.gachaCount || 0) + 1;
-      accountUpdates.pointBalance = (account.pointBalance || 0) + bonus;
-      accountUpdates.bonusEligible = false;
-      accountUpdates.dailyBonus = daily;
+      next.pointBalance = (current.pointBalance || 0) + bonus;
+      next.bonusEligible = false;
+      next.dailyBonus = daily;
+      effects.rate = rate;
 
       if (bonus > 0) {
-        entries.push(
+        effects.entries.push(
           txEntry({
             summary: `ガチャボーナス+${rate}%`,
             kind: "point",
             category: "gacha",
             point: bonus,
             total: bonus,
+            batchId,
             items: [{ label: `ガチャボーナス(${rate}%)`, amount: bonus }],
           })
         );
-        statPoints.gacha = bonus;
+        effects.statPoints.gacha = bonus;
       }
-      accountUpdates.lastGachaRate = rate;
+    }
+
+    return next;
+  });
+
+  if (!txResult.committed) {
+    const err = new Error(effects?.error || "処理できませんでした");
+    err.statusCode = effects?.error ? 403 : 409;
+    throw err;
+  }
+  // The gacha "no spins left" case commits (to clear eligibility) but is
+  // still a failure from the customer's point of view.
+  if (effects.error) {
+    const err = new Error(effects.error);
+    err.statusCode = 403;
+    throw err;
+  }
+
+  // Cross-account referrer bonus — its own transaction, since it's a
+  // different account that could just as easily be mid-charge itself.
+  if (effects.crossAccount) {
+    const refRef = db.ref(`${base}/accounts/${effects.crossAccount.accountId}`);
+    const refResult = await refRef.transaction((current) => {
+      if (!current || (current.status && current.status !== "active")) return; // abort silently
+      return { ...current, pointBalance: (current.pointBalance || 0) + effects.crossAccount.pointDelta };
+    });
+    if (refResult.committed) {
+      await db
+        .ref(`${base}/transactions/${effects.crossAccount.accountId}`)
+        .push(effects.crossAccount.entry);
+    } else {
+      // Referrer couldn't be credited (blacklisted, deleted, etc). The
+      // charge itself still succeeds; the referral portion is simply
+      // skipped rather than left half-applied.
+      delete effects.statPoints.referral;
+    }
+  }
+
+  // Transaction-history entries and running totals are appended separately.
+  // ServerValue.increment on the stats paths is itself atomic per path, so
+  // concurrent charges add up correctly even though this isn't inside the
+  // account transaction.
+  const updates = {};
+  for (const entry of effects.entries) {
+    const key = db.ref(`${base}/transactions/${customerId}`).push().key;
+    updates[`${base}/transactions/${customerId}/${key}`] = entry;
+  }
+  let pointTotal = 0;
+  for (const [key, value] of Object.entries(effects.statPoints)) {
+    if (!value) continue;
+    pointTotal += value;
+    updates[`${base}/stats/points/${key}`] = increment(value);
+    updates[`${base}/stats/terms/${term}/points/${key}`] = increment(value);
+  }
+  if (pointTotal) {
+    updates[`${base}/stats/pointTotal`] = increment(pointTotal);
+    updates[`${base}/stats/terms/${term}/point`] = increment(pointTotal);
+  }
+  if (effects.statCash) {
+    updates[`${base}/stats/cashTotal`] = increment(effects.statCash);
+    updates[`${base}/stats/terms/${term}/cash`] = increment(effects.statCash);
+  }
+  if (Object.keys(updates).length > 0) await db.ref().update(updates);
+
+  return { ok: true, rate: effects.rate };
+}
+
+// ---- cancel ----
+// Reverses every entry from one action (matched by batchId — a charge and
+// its bonus are cancelled together, not one at a time) on the initiating
+// customer's account, and the referrer's account too if that charge
+// triggered a cross-account referral bonus. Same-day only: past that, too
+// much else may already depend on the balance the entry created.
+async function handleCancel({ db, base, customerId, transactionId }) {
+  if (!transactionId) {
+    const err = new Error("取消対象のIDが必要です");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const original = (await db.ref(`${base}/transactions/${customerId}/${transactionId}`).get()).val();
+  if (!original) {
+    const err = new Error("対象の取引が見つかりません");
+    err.statusCode = 404;
+    throw err;
+  }
+  if (original.canceled) {
+    const err = new Error("この取引は既に取消済みです");
+    err.statusCode = 400;
+    throw err;
+  }
+  if (original.kind === "cancellation") {
+    const err = new Error("取消の記録は取消できません");
+    err.statusCode = 400;
+    throw err;
+  }
+  if (dayKey(new Date(original.ts)) !== dayKey()) {
+    const err = new Error("当日の取引のみ取消できます");
+    err.statusCode = 403;
+    throw err;
+  }
+
+  const batchId = original.batchId || transactionId;
+  const term = termKeyOf(new Date(original.ts));
+
+  const ownSnap = (await db.ref(`${base}/transactions/${customerId}`).get()).val() || {};
+  const ownKeys = Object.entries(ownSnap)
+    .filter(([key, e]) => (e.batchId || key) === batchId && !e.canceled && e.kind !== "cancellation")
+    .map(([key]) => key);
+
+  let depositDelta = 0;
+  let pointDelta = 0;
+  const statDelta = {};
+  let cashDelta = 0;
+  let clearReferralFlag = false;
+
+  for (const key of ownKeys) {
+    const e = ownSnap[key];
+    if (e.kind === "charge") {
+      depositDelta -= e.cash || 0;
+      cashDelta -= e.cash || 0;
+    } else if (e.kind === "point") {
+      pointDelta -= e.point || 0;
+      if (e.category) statDelta[e.category] = (statDelta[e.category] || 0) - (e.point || 0);
+      if (e.category === "referral") clearReferralFlag = true;
+    } else if (e.kind === "payment") {
+      depositDelta += e.depositUsed || 0;
+      pointDelta += e.pointUsed || 0;
+      pointDelta -= e.earned || 0;
+    } else if (e.kind === "purchasePoint") {
+      // Accounted via the sibling payment entry's `earned` field above —
+      // only the stat category needs decrementing here, not the balance.
+      if (e.category) statDelta[e.category] = (statDelta[e.category] || 0) - (e.point || 0);
+    }
+  }
+
+  // The referrer's half, if this batch granted a cross-account bonus.
+  const account = (await db.ref(`${base}/accounts/${customerId}`).get()).val();
+  let referrerId = null;
+  let referrerKey = null;
+  let referrerPointDelta = 0;
+  if (account && account.referredBy) {
+    const referrerSnap = (await db.ref(`${base}/transactions/${account.referredBy}`).get()).val() || {};
+    for (const [key, e] of Object.entries(referrerSnap)) {
+      if ((e.batchId || key) === batchId && !e.canceled && e.category === "referral") {
+        referrerId = account.referredBy;
+        referrerKey = key;
+        referrerPointDelta -= e.point || 0;
+        statDelta.referral = (statDelta.referral || 0) - (e.point || 0);
+        break;
+      }
+    }
+  }
+
+  if (ownKeys.length === 0 && !referrerId) {
+    const err = new Error("取消できる内容がありません");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // Reverse the initiating customer's balance. transaction() both applies
+  // the change and re-checks it wouldn't go negative at commit time — if
+  // the points or deposit were already spent since this entry was made,
+  // the cancellation is refused rather than pushing the balance below zero.
+  const accountRef = db.ref(`${base}/accounts/${customerId}`);
+  const result = await accountRef.transaction((current) => {
+    if (!current) return; // abort
+    const newDeposit = (current.depositBalance || 0) + depositDelta;
+    const newPoint = (current.pointBalance || 0) + pointDelta;
+    if (newDeposit < 0 || newPoint < 0) return; // abort — already spent
+    return {
+      ...current,
+      depositBalance: newDeposit,
+      pointBalance: newPoint,
+      referralBonusGiven: clearReferralFlag ? false : current.referralBonusGiven,
+    };
+  });
+  if (!result.committed) {
+    const err = new Error(
+      "取消すると残高がマイナスになるため取消できません(既に使用されている可能性があります)"
+    );
+    err.statusCode = 409;
+    throw err;
+  }
+
+  // The referrer's side is a separate account and a separate transaction —
+  // reversed only if it still can be without going negative. If it can't,
+  // the customer's side stays reversed regardless; that half is reported
+  // back so staff know to check it by hand.
+  let referrerReversed = false;
+  let referrerBlocked = false;
+  if (referrerId) {
+    const refRef = db.ref(`${base}/accounts/${referrerId}`);
+    const refResult = await refRef.transaction((current) => {
+      if (!current) return;
+      const newPoint = (current.pointBalance || 0) + referrerPointDelta;
+      if (newPoint < 0) return; // abort
+      return { ...current, pointBalance: newPoint };
+    });
+    referrerReversed = refResult.committed;
+    referrerBlocked = !refResult.committed;
+    if (!referrerReversed) {
+      delete statDelta.referral;
+    }
+  }
+
+  // Mark every reversed entry canceled, write the cancellation records, and
+  // apply the stat deltas — one multi-path update.
+  const updates = {};
+  for (const key of ownKeys) {
+    updates[`${base}/transactions/${customerId}/${key}/canceled`] = true;
+  }
+  const cancelKey = db.ref(`${base}/transactions/${customerId}`).push().key;
+  updates[`${base}/transactions/${customerId}/${cancelKey}`] = txEntry({
+    summary: `取消: ${original.summary || ""}`,
+    kind: "cancellation",
+    reversalOf: transactionId,
+    total: -(original.total || 0),
+  });
+
+  if (referrerReversed && referrerKey) {
+    updates[`${base}/transactions/${referrerId}/${referrerKey}/canceled`] = true;
+    const refCancelKey = db.ref(`${base}/transactions/${referrerId}`).push().key;
+    updates[`${base}/transactions/${referrerId}/${refCancelKey}`] = txEntry({
+      summary: "取消: お友達紹介ボーナス(紹介した方)",
+      kind: "cancellation",
+      reversalOf: referrerKey,
+      total: -referrerPointDelta,
+    });
+  }
+
+  for (const [key, value] of Object.entries(statDelta)) {
+    if (!value) continue;
+    updates[`${base}/stats/points/${key}`] = increment(value);
+    updates[`${base}/stats/terms/${term}/points/${key}`] = increment(value);
+  }
+  const pointStatTotal = Object.values(statDelta).reduce((s, v) => s + (v || 0), 0);
+  if (pointStatTotal) {
+    updates[`${base}/stats/pointTotal`] = increment(pointStatTotal);
+    updates[`${base}/stats/terms/${term}/point`] = increment(pointStatTotal);
+  }
+  if (cashDelta) {
+    updates[`${base}/stats/cashTotal`] = increment(cashDelta);
+    updates[`${base}/stats/terms/${term}/cash`] = increment(cashDelta);
+  }
+
+  await db.ref().update(updates);
+
+  return {
+    ok: true,
+    referrerBlocked,
+    note: referrerBlocked
+      ? "お客様分は取消しましたが、紹介した方の分は残高不足のため取消できませんでした。個別にご確認ください。"
+      : null,
+  };
+}
+
+exports.handler = async (event) => {
+  if (event.httpMethod !== "POST") {
+    return { statusCode: 405, body: JSON.stringify({ error: "POSTで呼び出してください" }) };
+  }
+
+  let body;
+  try {
+    body = JSON.parse(event.body || "{}");
+  } catch (e) {
+    return { statusCode: 400, body: JSON.stringify({ error: "リクエストの形式が不正です" }) };
+  }
+
+  const { idToken, storeId, customerId, action, amount, transactionId } = body;
+  if (!idToken || !storeId || !customerId || !action) {
+    return { statusCode: 400, body: JSON.stringify({ error: "入力が足りません" }) };
+  }
+
+  const db = admin.database();
+  const base = `stores/${storeId}`;
+
+  try {
+    await authorize(idToken, storeId, customerId, action);
+
+    let result;
+    if (action === "cancel") {
+      result = await handleCancel({ db, base, customerId, transactionId });
+    } else if (["charge", "payment", "gacha"].includes(action)) {
+      const settings = (await db.ref(`${base}/storeSettings`).get()).val() || {};
+      result = await runAccountAction({ db, base, customerId, action, amount, settings });
     } else {
       return { statusCode: 400, body: JSON.stringify({ error: "不明な操作です" }) };
     }
 
-    // One write for the account, the new transactions and the running totals,
-    // so a failure can't leave the balance changed without a matching record.
-    const updates = {};
-    for (const [key, value] of Object.entries(accountUpdates)) {
-      updates[`${base}/accounts/${customerId}/${key}`] = value;
-    }
-    for (const entry of entries) {
-      const key = db.ref(`${base}/transactions/${customerId}`).push().key;
-      updates[`${base}/transactions/${customerId}/${key}`] = entry;
-    }
-    let pointTotal = 0;
-    for (const [key, value] of Object.entries(statPoints)) {
-      if (!value) continue;
-      pointTotal += value;
-      updates[`${base}/stats/points/${key}`] = admin.database.ServerValue.increment(value);
-      updates[`${base}/stats/terms/${term}/points/${key}`] = admin.database.ServerValue.increment(value);
-    }
-    if (pointTotal) {
-      updates[`${base}/stats/pointTotal`] = admin.database.ServerValue.increment(pointTotal);
-      updates[`${base}/stats/terms/${term}/point`] = admin.database.ServerValue.increment(pointTotal);
-    }
-    if (statCash) {
-      updates[`${base}/stats/cashTotal`] = admin.database.ServerValue.increment(statCash);
-      updates[`${base}/stats/terms/${term}/cash`] = admin.database.ServerValue.increment(statCash);
-    }
-
-    await db.ref().update(updates);
-
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ ok: true, rate: accountUpdates.lastGachaRate ?? null }),
-    };
+    return { statusCode: 200, body: JSON.stringify(result) };
   } catch (e) {
     return {
       statusCode: e.statusCode || 500,
