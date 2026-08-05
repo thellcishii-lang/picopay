@@ -280,6 +280,19 @@ export async function saveStoreSettings(settings) {
   await update(sref("storeSettings"), settings);
 }
 
+// The three brand images, kept apart from storeSettings. storeSettings is
+// read in full on every charge and sale (the server needs the bonus rates),
+// and a few hundred KB of embedded logo/icon/hero images has no business
+// riding along with that every time.
+export async function getBranding() {
+  const snapshot = await get(sref("branding"));
+  return snapshot.val() || {};
+}
+
+export async function saveBranding(fields) {
+  await update(sref("branding"), fields);
+}
+
 
 // ---- Running totals (the store's dashboard + the 集計 screen) ----
 // Counting these up from every customer's history on each page load would
@@ -612,6 +625,12 @@ export function payFromAccount(customerId, amount) {
   return callTransact({ action: "payment", customerId, amount });
 }
 
+// Reverses a whole batch (a charge and its bonus, or a sale and its point
+// award) as one unit. Staff-only, same-day only — the server enforces both.
+export function cancelTransaction(customerId, transactionId) {
+  return callTransact({ action: "cancel", customerId, transactionId });
+}
+
 // Returns the winning rate the server drew, so the screen can show it.
 export async function spinGacha(customerId) {
   const result = await callTransact({ action: "gacha", customerId });
@@ -642,4 +661,24 @@ export async function updateNotifyPrefs(customerId, prefs, pushToken) {
     }
   }
   await update(ref(db), updates);
+}
+
+// Full data export for the store's own records — separate from the
+// operator's automatic backup. That one exists whether or not anyone
+// remembers to run it; this one is a copy the store keeps for itself,
+// triggered on demand from the settings screen.
+export async function exportAllStoreData() {
+  const [accountsSnap, txSnap, statsSnap, settingsSnap] = await Promise.all([
+    get(sref("accounts")),
+    get(sref("transactions")),
+    get(sref("stats")),
+    get(sref("storeSettings")),
+  ]);
+  return {
+    exportedAt: new Date().toISOString(),
+    storeSettings: settingsSnap.val() || {},
+    accounts: accountsSnap.val() || {},
+    transactions: txSnap.val() || {},
+    stats: statsSnap.val() || {},
+  };
 }
