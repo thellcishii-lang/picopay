@@ -1,15 +1,15 @@
 import React from "react";
 import { C, PICO, BRANDING_SIZES, PICO_PLACEHOLDER, resolveBrandImage } from "./components.jsx";
 
-export default function ModeTopBar({ mode, storeSettings = {} }) {
+export default function ModeTopBar({ mode, storeSettings = {}, branding = {} }) {
   const brandMode = storeSettings.brandMode || "default";
   const fontFamily =
     storeSettings.storeNameFont === "mincho"
       ? "'Hiragino Mincho ProN', serif"
       : "'Hiragino Sans', sans-serif";
   const fontWeight = storeSettings.storeNameWeight === "bold" ? 700 : 500;
-  const logo = resolveBrandImage(storeSettings.logoImage, PICO_PLACEHOLDER.logo);
-  const icon = resolveBrandImage(storeSettings.iconImage, PICO_PLACEHOLDER.icon);
+  const logo = resolveBrandImage(branding.logoImage, PICO_PLACEHOLDER.logo);
+  const icon = resolveBrandImage(branding.iconImage, PICO_PLACEHOLDER.icon);
 
   return (
     <div className="sticky top-0 z-10" style={{ background: C.paper, borderBottom: `1px solid ${C.line}` }}>
