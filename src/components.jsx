@@ -778,7 +778,7 @@ function WeatherCampaignSettings({ weatherEnabled, setWeatherEnabled, storeSetti
           <span className="text-sm font-bold" style={{ color: C.ink }}>天気連動ゲリラボーナス</span>
         </div>
         <button
-          onClick={() => setWeatherEnabled(!weatherEnabled)}
+          onClick={() => setWeatherEnabled && setWeatherEnabled(!weatherEnabled)}
           className="relative w-11 h-6 rounded-full transition-colors shrink-0"
           style={{ background: weatherEnabled ? C.teal : C.line }}
         >
@@ -989,7 +989,7 @@ function RankSettings({ rankingEnabled, setRankingEnabled, storeSettings, onSave
           <span className="text-sm font-bold" style={{ color: C.ink }}>会員ランク(シルバー/ゴールド/プラチナ)</span>
         </div>
         <button
-          onClick={() => setRankingEnabled(!rankingEnabled)}
+          onClick={() => setRankingEnabled && setRankingEnabled(!rankingEnabled)}
           className="relative w-11 h-6 rounded-full transition-colors shrink-0"
           style={{ background: rankingEnabled ? C.teal : C.line }}
         >
@@ -1600,7 +1600,7 @@ function exportCustomersCsv(customers) {
   );
 }
 
-function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermanently, onDeleted, onReissue }) {
+function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermanently, onDeleted, onReissue, permissions = {} }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -1769,10 +1769,13 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
           ))}
         </div>
 
-        {/* Status / deletion controls */}
+        {/* Status / deletion controls — only what this role may do is shown. */}
+        {(permissions.blacklist || permissions.deleteCustomer) && (
         <div className="mt-3 no-print">
           <div className="text-[11px] font-semibold" style={{ color: C.ink }}>お客様の管理</div>
-          <div className="mt-1 grid grid-cols-3 gap-2">
+          <div className="mt-1 grid gap-2" style={{ gridTemplateColumns: `repeat(${(permissions.blacklist ? 2 : 0) + (permissions.deleteCustomer ? 1 : 0)}, minmax(0, 1fr))` }}>
+            {permissions.blacklist && (
+            <>
             <button
               onClick={() => changeStatus(status === "blacklisted" ? "active" : "blacklisted")}
               disabled={busy}
@@ -1797,6 +1800,9 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
             >
               {status === "suspended" ? "解除する" : "一時停止"}
             </button>
+            </>
+            )}
+            {permissions.deleteCustomer && (
             <button
               onClick={() => setConfirmDelete(true)}
               disabled={busy}
@@ -1805,8 +1811,12 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
             >
               完全削除
             </button>
+            )}
           </div>
 
+          </div>
+        )}
+        <div className="no-print">
           <button
             onClick={() => { setShowReissue((v) => !v); setReissueUrl(null); setReissueError(null); }}
             className="mt-2 w-full rounded-lg py-2 text-[11px] font-semibold"
@@ -3127,6 +3137,236 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onBac
   );
 }
 
+
+// ---------------- 権限 ----------------
+// One till, one login, several people. Rather than an account each, the
+// screen starts at the lowest level and someone types a password to raise it
+// for a while. Only the levels that have actually been set up are offered.
+const PERMISSION_LIST = [
+  { key: "blacklist", label: "ブラックリスト・一時停止" },
+  { key: "deleteCustomer", label: "会員削除" },
+  { key: "settingsBasic", label: "設定の変更(オン/オフを除く)" },
+  { key: "settingsFull", label: "設定画面すべて(各種集計を除く)" },
+  { key: "aggregate", label: "各種集計" },
+];
+
+const ROLE_ORDER = ["other2", "other3", "admin"];
+const ROLE_LABEL = {
+  other1: "その他1",
+  other2: "その他2",
+  other3: "その他3",
+  admin: "admin",
+  owner: "adminオーナー",
+};
+
+function AdminLogin({ roles, activeRole, onVerify, onExit, onBack, onSignOut }) {
+  const [values, setValues] = useState({});
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  // Only levels that exist are shown — an empty box for a level nobody set up
+  // just invites wrong guesses.
+  const available = ROLE_ORDER.filter((r) => roles[r]);
+
+  const submit = async (role) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await onVerify(role, values[role] || "");
+      onBack();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="max-w-md mx-auto px-4 pb-10">
+      <button onClick={onBack} className="mt-4 flex items-center gap-1 text-[12px] font-semibold" style={{ color: C.mute }}>
+        <ChevronLeft size={14} /> 設定に戻る
+      </button>
+      <div className="mt-2 text-lg font-bold" style={{ color: C.ink }}>adminログイン</div>
+      <div className="text-[11px] mt-1" style={{ color: C.mute }}>
+        現在:{ROLE_LABEL[activeRole] || activeRole}。パスワードを入れると30分間その権限になります
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {[...available, "owner"].map((role) => (
+          <div key={role} className="rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+            <div className="text-[12px] font-semibold" style={{ color: C.ink }}>{ROLE_LABEL[role]}</div>
+            {role === "owner" && (
+              <div className="text-[10px] mt-0.5" style={{ color: C.mute }}>
+                チャットで発行した6桁のコードを入れてください(10分間有効・1回限り)
+              </div>
+            )}
+            <div className="mt-2 flex gap-2">
+              <input
+                type="password"
+                value={values[role] || ""}
+                onChange={(e) => setValues({ ...values, [role]: e.target.value })}
+                className="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
+                style={{ background: C.cream, color: C.ink }}
+              />
+              <button
+                onClick={() => submit(role)}
+                disabled={busy}
+                className="rounded-lg px-4 text-[11px] font-semibold"
+                style={{ background: C.teal, color: "#fff", opacity: busy ? 0.6 : 1 }}
+              >
+                入る
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {error && (
+        <div className="mt-3 text-[11px] font-semibold" style={{ color: C.coral }}>{error}</div>
+      )}
+
+      {activeRole !== "other1" && (
+        <button
+          onClick={() => {
+            onExit();
+            onBack();
+          }}
+          className="mt-4 w-full rounded-2xl py-3 text-sm font-bold"
+          style={{ background: C.paper, border: `1px solid ${C.line}`, color: C.mute }}
+        >
+          通常の状態に戻す
+        </button>
+      )}
+
+      <SignOutButton onSignOut={onSignOut} />
+    </div>
+  );
+}
+
+// Only adminオーナー sees this. Creating a level = ticking what it may do and
+// giving it a password (その他1 never has one — it's the default state).
+function RoleEditor({ roles, onSave, onDelete, onBack }) {
+  const [editing, setEditing] = useState(null);
+  const [perms, setPerms] = useState({});
+  const [password, setPassword] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  const open = (role) => {
+    setEditing(role);
+    setPerms(roles[role] || {});
+    setPassword("");
+    setSaved(false);
+  };
+
+  const save = async () => {
+    await onSave(editing, { perms, password: editing === "other1" ? null : password });
+    setSaved(true);
+    setTimeout(() => {
+      setSaved(false);
+      setEditing(null);
+    }, 1200);
+  };
+
+  if (editing) {
+    return (
+      <div className="max-w-md mx-auto px-4 pb-10">
+        <button onClick={() => setEditing(null)} className="mt-4 flex items-center gap-1 text-[12px] font-semibold" style={{ color: C.mute }}>
+          <ChevronLeft size={14} /> 一覧に戻る
+        </button>
+        <div className="mt-2 text-lg font-bold" style={{ color: C.ink }}>{ROLE_LABEL[editing]}の設定</div>
+
+        <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+          <div className="text-sm font-bold" style={{ color: C.ink }}>できること</div>
+          <div className="mt-2 space-y-2">
+            {PERMISSION_LIST.map((p) => (
+              <label key={p.key} className="flex items-center gap-2 rounded-xl p-3 cursor-pointer" style={{ background: C.cream }}>
+                <input
+                  type="checkbox"
+                  checked={!!perms[p.key]}
+                  onChange={(e) => setPerms({ ...perms, [p.key]: e.target.checked })}
+                />
+                <span className="text-[12px]" style={{ color: C.ink }}>{p.label}</span>
+              </label>
+            ))}
+          </div>
+
+          {editing !== "other1" && (
+            <div className="mt-3">
+              <div className="text-[11px] font-semibold" style={{ color: C.ink }}>パスワード</div>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={roles[editing] ? "変更する場合のみ入力" : "新しいパスワード"}
+                className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none"
+                style={{ background: C.cream, color: C.ink }}
+              />
+              <div className="text-[10px] mt-1" style={{ color: C.mute }}>
+                保存後は表示できません。控えを取ってから保存してください
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={save}
+            className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
+            style={{ background: C.teal, color: "#fff" }}
+          >
+            {saved ? "✓ 保存しました" : "保存"}
+          </button>
+
+          {roles[editing] && editing !== "other1" && (
+            <button
+              onClick={async () => {
+                if (!window.confirm(`${ROLE_LABEL[editing]}を削除しますか?`)) return;
+                await onDelete(editing);
+                setEditing(null);
+              }}
+              className="mt-2 w-full rounded-full py-2 text-[11px] font-semibold"
+              style={{ background: C.cream, color: C.mute }}
+            >
+              この区分を削除する
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-md mx-auto px-4 pb-10">
+      <button onClick={onBack} className="mt-4 flex items-center gap-1 text-[12px] font-semibold" style={{ color: C.mute }}>
+        <ChevronLeft size={14} /> 設定に戻る
+      </button>
+      <div className="mt-2 text-lg font-bold" style={{ color: C.ink }}>権限の設定</div>
+      <div className="text-[11px] mt-1" style={{ color: C.mute }}>
+        「その他1」はパスワードなしの通常の状態です。他は設定するとadminログインに現れます
+      </div>
+
+      <div className="mt-4 space-y-2">
+        {["other1", "other2", "other3", "admin"].map((role) => (
+          <button
+            key={role}
+            onClick={() => open(role)}
+            className="w-full rounded-2xl p-4 flex items-center justify-between"
+            style={{ background: C.paper, border: `1px solid ${C.line}` }}
+          >
+            <div className="text-left">
+              <div className="text-[13px] font-bold" style={{ color: C.ink }}>{ROLE_LABEL[role]}</div>
+              <div className="text-[10px] mt-0.5" style={{ color: C.mute }}>
+                {roles[role]
+                  ? PERMISSION_LIST.filter((p) => roles[role][p.key]).map((p) => p.label).join("・") || "できることなし"
+                  : "未設定"}
+              </div>
+            </div>
+            <ChevronRight size={15} style={{ color: C.mute }} />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ---------------- SIGN OUT ----------------
 // Lives at the very bottom of the settings tab rather than floating on every
 // screen — signing out is rare, and having it always visible invited misclicks.
@@ -3171,9 +3411,11 @@ function SignOutButton({ onSignOut }) {
   );
 }
 
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, storeSettings = {}, onSaveStoreSettings, onSendPush, onSignOut, stats = {}, onLoadTransactions, weather = {}, onLookupArea }) {
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, storeSettings = {}, onSaveStoreSettings, onSendPush, onSignOut, stats = {}, onLoadTransactions, weather = {}, onLookupArea, roles = {}, activeRole = "other1", permissions = {}, onVerifyRole, onExitRole, onSaveRole, onDeleteRole }) {
   const [tab, setTab] = useState("dashboard");
   const [showAggregate, setShowAggregate] = useState(false);
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [showRoleEditor, setShowRoleEditor] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
   const [rainSending, setRainSending] = useState(false);
@@ -3219,6 +3461,30 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [showAggregate]);
+
+  if (showAdminLogin) {
+    return (
+      <AdminLogin
+        roles={roles}
+        activeRole={activeRole}
+        onVerify={onVerifyRole}
+        onExit={onExitRole}
+        onSignOut={onSignOut}
+        onBack={() => setShowAdminLogin(false)}
+      />
+    );
+  }
+
+  if (showRoleEditor) {
+    return (
+      <RoleEditor
+        roles={roles}
+        onSave={onSaveRole}
+        onDelete={onDeleteRole}
+        onBack={() => setShowRoleEditor(false)}
+      />
+    );
+  }
 
   if (showAggregate) {
     return (
@@ -3424,6 +3690,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
                   <CustomerDetailPanel
                     customerId={c.id}
                     onFetch={onFetchCustomerDetail}
+                    permissions={permissions}
                     onSetStatus={onSetCustomerStatus}
                     onDeletePermanently={onDeleteCustomer}
                     onDeleted={() => setExpandedId(null)}
@@ -3439,14 +3706,57 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
 
       {tab === "settings" && (
         <>
-          <PointSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
-          <RankSettings rankingEnabled={rankingEnabled} setRankingEnabled={setRankingEnabled} storeSettings={storeSettings} onSave={onSaveStoreSettings} />
-          <ReferralSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
-          <DepositBonusSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
-          <GachaSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
-          <SystemSafetySettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
-          <WeatherCampaignSettings weatherEnabled={weatherEnabled} setWeatherEnabled={setWeatherEnabled} storeSettings={storeSettings} onSave={onSaveStoreSettings} onLookupArea={onLookupArea} />
-          <StoreBrandingSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+          {/* 設定を触れる権限があるかどうかで、出すものを変える。オン/オフの
+              切り替えは settingsFull を持つ人だけ。 */}
+          {(permissions.settingsBasic || permissions.settingsFull) && (
+            <>
+              <PointSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+              <RankSettings
+                rankingEnabled={rankingEnabled}
+                setRankingEnabled={permissions.settingsFull ? setRankingEnabled : null}
+                storeSettings={storeSettings}
+                onSave={onSaveStoreSettings}
+              />
+              <ReferralSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+              <DepositBonusSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+              <GachaSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+              <SystemSafetySettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+              <WeatherCampaignSettings
+                weatherEnabled={weatherEnabled}
+                setWeatherEnabled={permissions.settingsFull ? setWeatherEnabled : null}
+                storeSettings={storeSettings}
+                onSave={onSaveStoreSettings}
+                onLookupArea={onLookupArea}
+              />
+              <StoreBrandingSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+            </>
+          )}
+
+          <button
+            onClick={() => setShowAdminLogin(true)}
+            className="mt-4 w-full rounded-2xl py-3 text-sm font-bold flex items-center justify-center gap-1"
+            style={{ background: C.paper, border: `1px solid ${C.line}`, color: C.teal }}
+          >
+            adminログイン
+            {activeRole !== "other1" && (
+              <span className="text-[10px] font-bold" style={{ color: C.coral }}>
+                ({ROLE_LABEL[activeRole] || activeRole})
+              </span>
+            )}
+            <ChevronRight size={15} />
+          </button>
+
+          {permissions.owner && (
+            <button
+              onClick={() => setShowRoleEditor(true)}
+              className="mt-2 w-full rounded-2xl py-3 text-sm font-bold flex items-center justify-center gap-1"
+              style={{ background: C.paper, border: `1px solid ${C.line}`, color: C.teal }}
+            >
+              権限の設定 <ChevronRight size={15} />
+            </button>
+          )}
+
+          {permissions.aggregate && (
           <button
             onClick={() => setShowAggregate(true)}
             className="mt-4 w-full rounded-2xl py-3 text-sm font-bold flex items-center justify-center gap-1"
@@ -3454,6 +3764,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
           >
             各種集計 <ChevronRight size={15} />
           </button>
+          )}
           <SignOutButton onSignOut={onSignOut} />
         </>
       )}
@@ -3524,15 +3835,18 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
   const qrValue = `PICOPAY:${customerId}:${qrBucket}`;
   const secondsLeft = ROTATE_MS / 1000 - (Math.floor(Date.now() / 1000) % (ROTATE_MS / 1000));
 
-  const spin = () => {
-    if (!bonusEligible) return;
+  const spin = async () => {
+    if (!bonusEligible || !onUseBonusSpin) return;
     setSpinning(true);
     setResult(null);
-    setTimeout(() => {
-      setSpinning(false);
-      setResult(20);
-      onUseBonusSpin && onUseBonusSpin(20);
-    }, 1400);
+    // The rate comes back from the server — deciding it here would let the
+    // customer's own device pick its prize.
+    const [rate] = await Promise.all([
+      onUseBonusSpin(),
+      new Promise((resolve) => setTimeout(resolve, 1400)),
+    ]);
+    setSpinning(false);
+    setResult(rate ?? 0);
   };
 
   const usableTotal = pointBalance + depositBalance;
