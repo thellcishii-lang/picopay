@@ -1,58 +1,78 @@
 {
   "rules": {
-    "accounts": {
-      ".read": "auth != null && auth.token.email != null",
-      "$customerId": {
-        ".read": "auth != null && (auth.token.email != null || auth.token.phone_number == data.child('profile/phone').val())",
-        ".write": "auth != null && (auth.token.email != null || auth.token.phone_number == data.child('profile/phone').val())",
-        ".validate": "newData.hasChildren(['pointBalance', 'depositBalance', 'bonusEligible'])",
-        "pointBalance": {
-          ".validate": "newData.isNumber() && newData.val() >= 0"
-        },
-        "depositBalance": {
-          ".validate": "newData.isNumber() && newData.val() >= 0"
-        },
-        "profile": {
-          "phone": {
-            ".read": true
+    "stores": {
+      "$storeId": {
+        "accounts": {
+          ".read": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId",
+          "$customerId": {
+            ".read": "auth != null && (root.child('storeAdmins').child(auth.uid).val() === $storeId || auth.token.phone_number == root.child('stores').child($storeId).child('accounts').child($customerId).child('profile/phone').val())",
+            ".write": "auth != null && (root.child('storeAdmins').child(auth.uid).val() === $storeId || auth.token.phone_number == root.child('stores').child($storeId).child('accounts').child($customerId).child('profile/phone').val())",
+            ".validate": "newData.hasChildren(['pointBalance', 'depositBalance'])",
+            "pointBalance": {
+              ".validate": "newData.isNumber() && newData.val() >= 0"
+            },
+            "depositBalance": {
+              ".validate": "newData.isNumber() && newData.val() >= 0"
+            },
+            "profile": {
+              "phone": {
+                ".read": true
+              }
+            },
+            "requireVerification": {
+              ".read": true
+            }
           }
         },
-        "requireVerification": {
-          ".read": true
+        "transactions": {
+          ".read": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId",
+          "$customerId": {
+            ".read": "auth != null && (root.child('storeAdmins').child(auth.uid).val() === $storeId || auth.token.phone_number == root.child('stores').child($storeId).child('accounts').child($customerId).child('profile/phone').val())",
+            ".write": "auth != null && (root.child('storeAdmins').child(auth.uid).val() === $storeId || auth.token.phone_number == root.child('stores').child($storeId).child('accounts').child($customerId).child('profile/phone').val())",
+            "$txId": {
+              ".validate": "newData.hasChild('ts')"
+            }
+          }
+        },
+        "idPhotos": {
+          "$customerId": {
+            ".read": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId",
+            ".write": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId"
+          }
+        },
+        "storeSettings": {
+          ".read": true,
+          ".write": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId"
+        },
+        "stats": {
+          ".read": "auth != null",
+          ".write": "auth != null"
+        },
+        "weather": {
+          ".read": true,
+          ".write": false
         }
       }
     },
-    "idPhotos": {
-      "$customerId": {
-        ".read": "auth != null && auth.token.email != null",
-        ".write": "auth != null && auth.token.email != null"
-      }
-    },
-    "storeSettings": {
+    "customerIndex": {
       ".read": true,
-      ".write": "auth != null && auth.token.email != null"
+      ".write": "auth != null"
+    },
+    "storeAdmins": {
+      ".read": "auth != null",
+      ".write": false
+    },
+    "storeList": {
+      ".read": "auth != null",
+      ".write": false
+    },
+    "meta": {
+      ".read": false,
+      ".write": false
     },
     "$other": {
       ".read": false,
       ".write": false
-    },
-    "stats": {
-      ".read": "auth != null",
-      ".write": "auth != null"
-    },
-    "weather": {
-      ".read": true,
-      ".write": false
-    },
-    "transactions": {
-      ".read": "auth != null && auth.token.email != null",
-      "$customerId": {
-        ".read": "auth != null && (auth.token.email != null || auth.token.phone_number == root.child('accounts').child($customerId).child('profile/phone').val())",
-        ".write": "auth != null && (auth.token.email != null || auth.token.phone_number == root.child('accounts').child($customerId).child('profile/phone').val())",
-        "$txId": {
-          ".validate": "newData.hasChild('ts')"
-        }
-      }
     }
   }
 }
