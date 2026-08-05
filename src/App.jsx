@@ -10,6 +10,8 @@ import {
   createAccount,
   listCustomers,
   getStoreSettings,
+  getBranding,
+  saveBranding,
   saveStoreSettings,
   setCustomerStatus,
   deleteCustomerPermanently,
@@ -20,6 +22,8 @@ import {
   ensureStatsStarted,
   chargeAccount,
   payFromAccount,
+  cancelTransaction,
+  exportAllStoreData,
   spinGacha,
   fetchVerificationInfo,
   listTransactions,
@@ -262,6 +266,11 @@ export default function App() {
   // name, and the customer-side hero image. Fetched on both sides (store
   // needs it to edit, customer needs it to render their own header).
   const [storeSettings, setStoreSettingsState] = useState({});
+  // The three brand images live apart from storeSettings — that node is
+  // read in full on every charge/sale (transact.js needs the bonus rates),
+  // and a few hundred KB of embedded images doesn't belong in something
+  // read that often.
+  const [branding, setBrandingState] = useState({});
   // Each settings panel reads its starting value from storeSettings when it
   // first renders. If the screen appears before the settings have arrived,
   // every panel starts on its default and shows those instead — which is why
@@ -270,8 +279,9 @@ export default function App() {
   useEffect(() => {
     if (!storeId) return;
     setSettingsLoaded(false);
-    getStoreSettings().then((data) => {
-      setStoreSettingsState(data);
+    Promise.all([getStoreSettings(), getBranding()]).then(([settings, brandingData]) => {
+      setStoreSettingsState(settings);
+      setBrandingState(brandingData);
       setSettingsLoaded(true);
     });
   }, [mode, storeId]);
@@ -291,8 +301,8 @@ export default function App() {
     let cancelled = false;
     const apply = async () => {
       let iconUrl = null;
-      const icon = resolveBrandImage(storeSettings.iconImage, PICO_PLACEHOLDER.icon);
-      const logo = resolveBrandImage(storeSettings.logoImage, PICO_PLACEHOLDER.logo);
+      const icon = resolveBrandImage(branding.iconImage, PICO_PLACEHOLDER.icon);
+      const logo = resolveBrandImage(branding.logoImage, PICO_PLACEHOLDER.logo);
       if (storeSettings.brandMode === "iconName" && icon) {
         iconUrl = icon;
       } else if (storeSettings.brandMode === "logo" && logo) {
@@ -319,7 +329,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [storeSettings.brandMode, storeSettings.iconImage, storeSettings.logoImage, storeSettings.storeName]);
+  }, [storeSettings.brandMode, branding.iconImage, branding.logoImage, storeSettings.storeName]);
 
   // ---- Store-side: the full customer list ----
   const [customers, setCustomers] = useState([]);
@@ -436,6 +446,13 @@ export default function App() {
     await payFromAccount(customerId, amount);
     refreshCustomers();
     refreshStats();
+  };
+
+  const handleCancelTransaction = async (customerId, transactionId) => {
+    const result = await cancelTransaction(customerId, transactionId);
+    refreshCustomers();
+    refreshStats();
+    return result;
   };
 
   const totalBalance = customers.reduce((s, c) => s + c.balance, 0);
@@ -555,7 +572,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen" style={{ background: C.cream, fontFamily: "'Hiragino Sans', system-ui, sans-serif" }}>
-      <ModeTopBar mode={mode} storeSettings={storeSettings} />
+      <ModeTopBar mode={mode} storeSettings={storeSettings} branding={branding} />
       {mode === "store" ? (
         authUser === undefined ? (
           <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
@@ -631,6 +648,10 @@ export default function App() {
               onExitRole={() => setActiveRole("other1")}
               onSaveRole={saveRole}
               onDeleteRole={deleteRole}
+              onCancelTransaction={handleCancelTransaction}
+              onExportAllData={exportAllStoreData}
+              branding={branding}
+              onSaveBranding={saveBranding}
             />
           </>
         )
@@ -692,6 +713,7 @@ export default function App() {
           rankingEnabled={rankingEnabled}
           customerId={myCustomerId}
           storeSettings={storeSettings}
+          branding={branding}
           notifyOptIn={account.notifyOptIn || null}
           onUpdateNotifyPrefs={(prefs) => handleUpdateNotifyPrefs(myCustomerId, prefs)}
         />
