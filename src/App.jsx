@@ -25,6 +25,9 @@ import {
   recordMissingSnapshots,
   subscribeToWeather,
   lookupWeatherArea,
+  setCurrentStore,
+  resolveStoreForAdmin,
+  resolveStoreForCustomer,
   DEFAULT_ACCOUNT,
   auth,
   subscribeToAuth,
@@ -241,6 +244,10 @@ export default function App() {
 
   // ---- Auth state (shared: applies to whichever mode this page is) ----
   const [authUser, setAuthUser] = useState(undefined); // undefined = not checked yet, null = signed out
+  // Which store this session is looking at. Nothing can read or write until
+  // it's known, so the screens wait on it.
+  //   undefined = not resolved yet, null = resolved but no store found
+  const [storeId, setStoreId] = useState(undefined);
   useEffect(() => {
     const unsubscribe = subscribeToAuth(setAuthUser);
     return () => unsubscribe();
@@ -306,25 +313,29 @@ export default function App() {
     setCustomers(list);
   }, []);
   useEffect(() => {
-    if (mode === "store" && authUser) refreshCustomers();
-  }, [mode, authUser, refreshCustomers]);
+    if (mode === "store" && authUser && storeId) refreshCustomers();
+  }, [mode, authUser, storeId, refreshCustomers]);
+
 
   // Running totals for the dashboard. The start date is stamped on the first
   // store sign-in, so everything shown is "since the store began using this".
   const [stats, setStats] = useState({});
   const [weather, setWeather] = useState({});
-  useEffect(() => subscribeToWeather(setWeather), []);
+  useEffect(() => {
+    if (!storeId) return;
+    return subscribeToWeather(setWeather);
+  }, [storeId]);
   const refreshStats = useCallback(async () => {
     setStats(await getStats());
   }, []);
   useEffect(() => {
-    if (mode !== "store" || !authUser) return;
+    if (mode !== "store" || !authUser || !storeId) return;
     ensureStatsStarted()
       // If the scheduled reference-date job ever missed a run, fill the gap
       // here rather than leaving a hole in the record.
       .then(() => recordMissingSnapshots().catch(() => {}))
       .then(refreshStats);
-  }, [mode, authUser, refreshStats]);
+  }, [mode, authUser, storeId, refreshStats]);
 
   const handleSaveStoreSettings = async (updates) => {
     await saveStoreSettings(updates);
@@ -626,6 +637,36 @@ export default function App() {
     }
     return localStorage.getItem("picopay-customer-id");
   });
+  // Staff → their store. Customer → the store their id belongs to.
+  useEffect(() => {
+    let cancelled = false;
+    const resolve = async () => {
+      if (mode === "store") {
+        if (!authUser) {
+          setStoreId(authUser === null ? null : undefined);
+          return;
+        }
+        const id = await resolveStoreForAdmin(authUser.uid);
+        if (cancelled) return;
+        setCurrentStore(id);
+        setStoreId(id);
+      } else {
+        if (!myCustomerId) {
+          setStoreId(null);
+          return;
+        }
+        const id = await resolveStoreForCustomer(myCustomerId);
+        if (cancelled) return;
+        setCurrentStore(id);
+        setStoreId(id);
+      }
+    };
+    resolve();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, authUser, myCustomerId]);
+
   const [setupInput, setSetupInput] = useState("");
   const [account, setAccount] = useState(DEFAULT_ACCOUNT);
   const [accountLoaded, setAccountLoaded] = useState(false);
@@ -633,9 +674,9 @@ export default function App() {
   // capped at the most recent 50 — the account itself no longer carries it.
   const [myTransactions, setMyTransactions] = useState([]);
   useEffect(() => {
-    if (!myCustomerId) return;
+    if (!myCustomerId || !storeId) return;
     return subscribeToAccountTransactions(myCustomerId, setMyTransactions, 50);
-  }, [myCustomerId]);
+  }, [myCustomerId, storeId]);
   // The phone number on file for this account, and whether verification is
   // required at all — fetched via a public, read-only lookup so we can
   // decide whether the gate is needed *before* the customer is
@@ -646,7 +687,7 @@ export default function App() {
   const [phoneVerified, setPhoneVerified] = useState(false);
 
   useEffect(() => {
-    if (mode !== "customer" || !myCustomerId) return;
+    if (mode !== "customer" || !myCustomerId || !storeId) return;
     let cancelled = false;
     getAccountVerificationInfo(myCustomerId).then(({ phone, requireVerification }) => {
       if (!cancelled) {
@@ -657,7 +698,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [mode, myCustomerId]);
+  }, [mode, myCustomerId, storeId]);
 
   // If this browser session's Firebase Auth phone number already matches the
   // account's registered phone, or verification isn't required at all, skip
@@ -670,14 +711,14 @@ export default function App() {
   }, [myPhone, requireVerification, authUser]);
 
   useEffect(() => {
-    if (mode !== "customer" || !myCustomerId || !phoneVerified) return;
+    if (mode !== "customer" || !myCustomerId || !phoneVerified || !storeId) return;
     setAccountLoaded(false);
     const unsubscribe = subscribeToAccount(myCustomerId, (data) => {
       setAccount(data);
       setAccountLoaded(true);
     });
     return () => unsubscribe();
-  }, [mode, myCustomerId, phoneVerified]);
+  }, [mode, myCustomerId, phoneVerified, storeId]);
 
   const handleUseBonusSpin = async (rate) => {
     if (!myCustomerId) return;
@@ -741,6 +782,29 @@ export default function App() {
           </div>
         ) : !authUser ? (
           <StoreLogin />
+        ) : storeId === undefined ? (
+          <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
+            <div className="text-sm" style={{ color: C.mute }}>読み込み中…</div>
+          </div>
+        ) : !storeId ? (
+          // Signed in, but this account isn't attached to any store — normally
+          // only possible if the store was removed, or sign-up happened
+          // outside the申込フロー.
+          <div className="max-w-md mx-auto px-4 pt-10">
+            <div className="rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+              <div className="text-sm font-bold" style={{ color: C.ink }}>店舗が見つかりません</div>
+              <div className="text-[12px] mt-1" style={{ color: C.mute }}>
+                このアカウントには店舗が紐づいていません。お申し込み時のメールをご確認いただくか、サポートまでご連絡ください。
+              </div>
+              <button
+                onClick={storeSignOut}
+                className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
+                style={{ background: C.cream, color: C.mute }}
+              >
+                ログアウト
+              </button>
+            </div>
+          </div>
         ) : (
           <>
             <StoreView
