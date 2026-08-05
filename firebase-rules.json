@@ -6,7 +6,7 @@
           ".read": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId",
           "$customerId": {
             ".read": "auth != null && (root.child('storeAdmins').child(auth.uid).val() === $storeId || auth.token.phone_number == root.child('stores').child($storeId).child('accounts').child($customerId).child('profile/phone').val())",
-            ".write": "auth != null && (root.child('storeAdmins').child(auth.uid).val() === $storeId || auth.token.phone_number == root.child('stores').child($storeId).child('accounts').child($customerId).child('profile/phone').val())",
+            ".write": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId && (!data.exists() || !newData.exists())",
             ".validate": "newData.hasChildren(['pointBalance', 'depositBalance'])",
             "pointBalance": {
               ".validate": "newData.isNumber() && newData.val() >= 0"
@@ -15,12 +15,22 @@
               ".validate": "newData.isNumber() && newData.val() >= 0"
             },
             "profile": {
-              "phone": {
-                ".read": true
-              }
+              ".write": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId"
+            },
+            "status": {
+              ".write": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId"
             },
             "requireVerification": {
-              ".read": true
+              ".write": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId"
+            },
+            "referredBy": {
+              ".write": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId"
+            },
+            "notifyOptIn": {
+              ".write": "auth != null && (root.child('storeAdmins').child(auth.uid).val() === $storeId || auth.token.phone_number == root.child('stores').child($storeId).child('accounts').child($customerId).child('profile/phone').val())"
+            },
+            "pushTokens": {
+              ".write": "auth != null && (root.child('storeAdmins').child(auth.uid).val() === $storeId || auth.token.phone_number == root.child('stores').child($storeId).child('accounts').child($customerId).child('profile/phone').val())"
             }
           }
         },
@@ -28,10 +38,7 @@
           ".read": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId",
           "$customerId": {
             ".read": "auth != null && (root.child('storeAdmins').child(auth.uid).val() === $storeId || auth.token.phone_number == root.child('stores').child($storeId).child('accounts').child($customerId).child('profile/phone').val())",
-            ".write": "auth != null && (root.child('storeAdmins').child(auth.uid).val() === $storeId || auth.token.phone_number == root.child('stores').child($storeId).child('accounts').child($customerId).child('profile/phone').val())",
-            "$txId": {
-              ".validate": "newData.hasChild('ts')"
-            }
+            ".write": false
           }
         },
         "idPhotos": {
@@ -44,19 +51,37 @@
           ".read": true,
           ".write": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId"
         },
+        "private": {
+          ".read": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId",
+          ".write": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId"
+        },
         "stats": {
-          ".read": "auth != null",
-          ".write": "auth != null"
+          ".read": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId",
+          ".write": false
         },
         "weather": {
           ".read": true,
+          ".write": false
+        },
+        "roles": {
+          ".read": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId",
+          ".write": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId"
+        },
+        "roleAuth": {
+          ".read": false,
+          ".write": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId"
+        },
+        "ownerCode": {
+          ".read": false,
           ".write": false
         }
       }
     },
     "customerIndex": {
-      ".read": true,
-      ".write": "auth != null"
+      "$customerId": {
+        ".read": true,
+        ".write": "auth != null"
+      }
     },
     "storeAdmins": {
       ".read": "auth != null",
