@@ -262,9 +262,18 @@ export default function App() {
   // name, and the customer-side hero image. Fetched on both sides (store
   // needs it to edit, customer needs it to render their own header).
   const [storeSettings, setStoreSettingsState] = useState({});
+  // Each settings panel reads its starting value from storeSettings when it
+  // first renders. If the screen appears before the settings have arrived,
+  // every panel starts on its default and shows those instead — which is why
+  // a reload looked like the settings had reset. The screen now waits.
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   useEffect(() => {
     if (!storeId) return;
-    getStoreSettings().then(setStoreSettingsState);
+    setSettingsLoaded(false);
+    getStoreSettings().then((data) => {
+      setStoreSettingsState(data);
+      setSettingsLoaded(true);
+    });
   }, [mode, storeId]);
 
   // rankingEnabled/weatherEnabled used to be local, per-device state, which
@@ -576,6 +585,10 @@ export default function App() {
                 ログアウト
               </button>
             </div>
+          </div>
+        ) : !settingsLoaded ? (
+          <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
+            <div className="text-sm" style={{ color: C.mute }}>読み込み中…</div>
           </div>
         ) : (
           <>
