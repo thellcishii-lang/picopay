@@ -2471,32 +2471,35 @@ function ReferralSettings({ storeSettings, onSave }) {
   );
 }
 
-function StoreBrandingSettings({ storeSettings, onSave }) {
+function StoreBrandingSettings({ storeSettings, onSave, branding = {}, onSaveBranding }) {
   const [brandMode, setBrandMode] = useState(storeSettings.brandMode || "default");
   // These hold the *stored* value (null = untouched, "" = deleted), not what
-  // gets displayed — see resolveBrandImage above.
-  const [logoImage, setLogoImage] = useState(storeSettings.logoImage ?? null);
-  const [iconImage, setIconImage] = useState(storeSettings.iconImage ?? null);
+  // gets displayed — see resolveBrandImage above. They live under a separate
+  // `branding` node, not storeSettings — storeSettings is what every
+  // decision reads (once per charge/sale), and the images were the one
+  // thing in it too large to justify that.
+  const [logoImage, setLogoImage] = useState(branding.logoImage ?? null);
+  const [iconImage, setIconImage] = useState(branding.iconImage ?? null);
   const [iconShape, setIconShape] = useState(storeSettings.iconShape || "circle");
   const [storeName, setStoreName] = useState(storeSettings.storeName || "");
   const [storeNameFont, setStoreNameFont] = useState(storeSettings.storeNameFont || "gothic");
   const [storeNameWeight, setStoreNameWeight] = useState(storeSettings.storeNameWeight || "normal");
-  const [heroImage, setHeroImage] = useState(storeSettings.heroImage ?? null);
+  const [heroImage, setHeroImage] = useState(branding.heroImage ?? null);
   const [showHeroOnCustomer, setShowHeroOnCustomer] = useState(storeSettings.showHeroOnCustomer || false);
   const [saved, setSaved] = useState(false);
 
   const save = async () => {
-    await onSave({
-      brandMode,
-      logoImage,
-      iconImage,
-      iconShape,
-      storeName,
-      storeNameFont,
-      storeNameWeight,
-      heroImage,
-      showHeroOnCustomer,
-    });
+    await Promise.all([
+      onSave({
+        brandMode,
+        iconShape,
+        storeName,
+        storeNameFont,
+        storeNameWeight,
+        showHeroOnCustomer,
+      }),
+      onSaveBranding({ logoImage, iconImage, heroImage }),
+    ]);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -2803,7 +2806,7 @@ function PointBreakdown({ points = {}, compact = false }) {
   );
 }
 
-function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onBack }) {
+function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onCancelTransaction, canCancel = false, onBack }) {
   const currentTerm = termKeyOfDate(new Date());
   const termKeys = Object.keys(stats.terms || {});
   if (!termKeys.includes(currentTerm)) termKeys.push(currentTerm);
@@ -2816,6 +2819,32 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onBac
   const [rows, setRows] = useState([]);
   const [visible, setVisible] = useState(PAGE_SIZE);
   const [loading, setLoading] = useState(false);
+  const [cancelingId, setCancelingId] = useState(null);
+  const [cancelError, setCancelError] = useState(null);
+
+  // Only today's, not-yet-canceled, non-cancellation entries can be
+  // reversed — the server enforces the same rule, this just avoids
+  // offering a button that would fail.
+  const todayStr = new Date().toDateString();
+  const canCancelRow = (r) =>
+    canCancel &&
+    !r.canceled &&
+    r.kind !== "cancellation" &&
+    new Date(r.ts).toDateString() === todayStr;
+
+  const doCancel = async (r) => {
+    setCancelingId(r.id);
+    setCancelError(null);
+    try {
+      const result = await onCancelTransaction(r.customerId, r.id);
+      if (result?.note) setCancelError(result.note);
+      await loadTx(txTerm, nameQuery);
+    } catch (e) {
+      setCancelError(e.message || "取消に失敗しました");
+    } finally {
+      setCancelingId(null);
+    }
+  };
 
   const depositTotal = customers.reduce((sum, c) => sum + (c.depositBalance || 0), 0);
   const pointTotal = customers.reduce((sum, c) => sum + (c.pointBalance || 0), 0);
@@ -3085,11 +3114,18 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onBac
                 </div>
                 <div className="mt-1 space-y-2">
                   {rows.slice(0, visible).map((r, i) => (
-                    <div key={i} className="rounded-xl p-3" style={{ background: C.cream }}>
+                    <div
+                      key={i}
+                      className="rounded-xl p-3"
+                      style={{ background: C.cream, opacity: r.canceled ? 0.5 : 1 }}
+                    >
                       <div className="flex items-center justify-between">
                         <span className="text-[11px]" style={{ color: C.mute }}>{formatDateTime(r.ts)}</span>
                         <span className="text-[12px] font-semibold" style={{ color: C.ink }}>{r.customerName}</span>
                       </div>
+                      {r.canceled && (
+                        <div className="text-[10px] font-bold" style={{ color: C.coral }}>取消済み</div>
+                      )}
                       {r.kind === "payment" ? (
                         <>
                           <div className="mt-1 text-[12px] font-bold" style={{ color: C.ink }}>
@@ -3116,9 +3152,22 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onBac
                           )}
                         </div>
                       )}
+                      {canCancelRow(r) && (
+                        <button
+                          onClick={() => doCancel(r)}
+                          disabled={cancelingId === r.id}
+                          className="mt-2 rounded-lg px-3 py-1 text-[10px] font-semibold"
+                          style={{ background: "#fff", color: C.coral, opacity: cancelingId === r.id ? 0.6 : 1 }}
+                        >
+                          {cancelingId === r.id ? "取消中…" : "この取引を取消"}
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
+                {cancelError && (
+                  <div className="mt-2 text-[11px] font-semibold" style={{ color: C.coral }}>{cancelError}</div>
+                )}
                 {visible < rows.length && (
                   <button
                     onClick={() => setVisible((v) => v + PAGE_SIZE)}
@@ -3411,11 +3460,30 @@ function SignOutButton({ onSignOut }) {
   );
 }
 
-function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, storeSettings = {}, onSaveStoreSettings, onSendPush, onSignOut, stats = {}, onLoadTransactions, weather = {}, onLookupArea, roles = {}, activeRole = "other1", permissions = {}, onVerifyRole, onExitRole, onSaveRole, onDeleteRole }) {
+function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankingEnabled, weatherEnabled, setWeatherEnabled, customers, onRegisterCustomer, onFetchCustomerDetail, onSetCustomerStatus, onDeleteCustomer, onReissueCustomer, storeSettings = {}, onSaveStoreSettings, onSendPush, onSignOut, stats = {}, onLoadTransactions, weather = {}, onLookupArea, roles = {}, activeRole = "other1", permissions = {}, onVerifyRole, onExitRole, onSaveRole, onDeleteRole, onCancelTransaction, onExportAllData, branding = {}, onSaveBranding }) {
   const [tab, setTab] = useState("dashboard");
   const [showAggregate, setShowAggregate] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [showRoleEditor, setShowRoleEditor] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  // A store's own copy of everything, separate from the operator's daily
+  // backup — this one exists only when the store asks for it.
+  const exportAllData = async () => {
+    setExporting(true);
+    try {
+      const data = await onExportAllData();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `picopay-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
+  };
   const [showRegister, setShowRegister] = useState(false);
   const [rainSent, setRainSent] = useState(false);
   const [rainSending, setRainSending] = useState(false);
@@ -3492,6 +3560,8 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
         stats={stats}
         customers={customers}
         onLoadTransactions={onLoadTransactions}
+        onCancelTransaction={onCancelTransaction}
+        canCancel={!!permissions.deleteCustomer}
         onBack={() => setShowAggregate(false)}
       />
     );
@@ -3728,7 +3798,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
                 onSave={onSaveStoreSettings}
                 onLookupArea={onLookupArea}
               />
-              <StoreBrandingSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+              <StoreBrandingSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} branding={branding} onSaveBranding={onSaveBranding} />
             </>
           )}
 
@@ -3763,6 +3833,17 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
             style={{ background: C.paper, border: `1px solid ${C.line}`, color: C.teal }}
           >
             各種集計 <ChevronRight size={15} />
+          </button>
+          )}
+
+          {permissions.aggregate && (
+          <button
+            onClick={exportAllData}
+            disabled={exporting}
+            className="mt-2 w-full rounded-2xl py-3 text-sm font-bold flex items-center justify-center gap-1"
+            style={{ background: C.paper, border: `1px solid ${C.line}`, color: C.teal, opacity: exporting ? 0.6 : 1 }}
+          >
+            {exporting ? "書き出し中…" : "全データを書き出す"}
           </button>
           )}
           <SignOutButton onSignOut={onSignOut} />
@@ -3804,7 +3885,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
 }
 
 // ---------------- CUSTOMER VIEW ----------------
-function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusSpin, history, rankingEnabled, customerId, storeSettings = {}, notifyOptIn, onUpdateNotifyPrefs }) {
+function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusSpin, history, rankingEnabled, customerId, storeSettings = {}, branding = {}, notifyOptIn, onUpdateNotifyPrefs }) {
   const [showNotifySettings, setShowNotifySettings] = useState(false);
   const [notifyDraft, setNotifyDraft] = useState({
     push: notifyOptIn?.push || false,
@@ -3865,10 +3946,10 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
   return (
     <div className="max-w-md mx-auto px-4 pb-10">
       {/* Store hero image — configured by the store, customer can't toggle it */}
-      {storeSettings.showHeroOnCustomer && resolveBrandImage(storeSettings.heroImage, PICO_PLACEHOLDER.hero) && (
+      {storeSettings.showHeroOnCustomer && resolveBrandImage(branding.heroImage, PICO_PLACEHOLDER.hero) && (
         <div className="mt-4 rounded-2xl overflow-hidden">
           <img
-            src={resolveBrandImage(storeSettings.heroImage, PICO_PLACEHOLDER.hero)}
+            src={resolveBrandImage(branding.heroImage, PICO_PLACEHOLDER.hero)}
             alt="お店の画像"
             style={{ width: "100%", aspectRatio: `${BRANDING_SIZES.heroWidth} / ${BRANDING_SIZES.heroHeight}`, objectFit: "cover" }}
           />
