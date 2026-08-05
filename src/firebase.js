@@ -528,3 +528,118 @@ export async function resolveStoreForCustomer(customerId) {
 // Store creation lives server-side (netlify/functions/create-store.js): it
 // has to create the staff login and write storeAdmins, and neither should be
 // possible from a browser.
+
+// ---- Roles ----
+// Four levels of access on one shared device: other1 (no password, what the
+// screen starts as), other2, other3, admin, and adminオーナー. The password
+// check happens server-side (netlify/functions/verify-role.js) because the
+// device is shared — anything the browser can read, every member of staff
+// can read.
+export const PERMISSIONS = [
+  { key: "blacklist", label: "ブラックリスト・一時停止" },
+  { key: "deleteCustomer", label: "会員削除" },
+  { key: "settingsBasic", label: "設定の変更(オン/オフを除く)" },
+  { key: "settingsFull", label: "設定画面すべて(各種集計を除く)" },
+  { key: "aggregate", label: "各種集計" },
+];
+
+export const ROLE_LABELS = {
+  other1: "その他1",
+  other2: "その他2",
+  other3: "その他3",
+  admin: "admin",
+  owner: "adminオーナー",
+};
+
+export function subscribeToRoles(callback) {
+  return onValue(sref("roles"), (snapshot) => callback(snapshot.val() || {}));
+}
+
+export async function getRoles() {
+  const snapshot = await get(sref("roles"));
+  return snapshot.val() || {};
+}
+
+// Permissions and passwords are saved separately: the permissions are fine
+// for staff to see, the passwords are not.
+export async function saveRole(role, { perms, password }) {
+  const updates = { [spath(`roles/${role}`)]: perms || {} };
+  if (password) updates[spath(`roleAuth/${role}`)] = password;
+  await update(ref(db), updates);
+}
+
+export async function deleteRole(role) {
+  await update(ref(db), {
+    [spath(`roles/${role}`)]: null,
+    [spath(`roleAuth/${role}`)]: null,
+  });
+}
+
+export async function verifyRolePassword(role, password) {
+  const res = await fetch("/.netlify/functions/verify-role", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ storeId: currentStoreId, role, password }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || "確認できませんでした");
+  return json;
+}
+
+// ---- Money ----
+// Charges, sales and gacha spins all go through one server function. The
+// browser says what happened; the server decides what it's worth and is the
+// only thing allowed to write a balance.
+async function callTransact(payload) {
+  const user = auth.currentUser;
+  if (!user) throw new Error("ログインが必要です");
+  const idToken = await user.getIdToken();
+  const res = await fetch("/.netlify/functions/transact", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...payload, idToken, storeId: currentStoreId }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || "処理に失敗しました");
+  return json;
+}
+
+export function chargeAccount(customerId, amount) {
+  return callTransact({ action: "charge", customerId, amount });
+}
+
+export function payFromAccount(customerId, amount) {
+  return callTransact({ action: "payment", customerId, amount });
+}
+
+// Returns the winning rate the server drew, so the screen can show it.
+export async function spinGacha(customerId) {
+  const result = await callTransact({ action: "gacha", customerId });
+  return result.rate || 0;
+}
+
+// The phone number behind an account, needed before the customer is
+// verified. It used to be world-readable for that reason; now the check
+// happens server-side so the numbers aren't sitting in the open.
+export async function fetchVerificationInfo(customerId) {
+  const res = await fetch(
+    `/.netlify/functions/account-check?id=${encodeURIComponent(customerId)}`
+  );
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || "確認できませんでした");
+  return json;
+}
+
+// The customer's own notification settings — the only part of their account
+// the browser may still write, so it's written field by field rather than by
+// saving the whole object back.
+export async function updateNotifyPrefs(customerId, prefs, pushToken) {
+  const updates = { [spath(`accounts/${customerId}/notifyOptIn`)]: prefs };
+  if (prefs.push && pushToken) {
+    const existing = (await get(sref(`accounts/${customerId}/pushTokens`))).val() || [];
+    if (!existing.includes(pushToken)) {
+      updates[spath(`accounts/${customerId}/pushTokens`)] = [...existing, pushToken];
+    }
+  }
+  await update(ref(db), updates);
+}
