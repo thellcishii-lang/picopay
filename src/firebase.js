@@ -3,7 +3,7 @@
 import { initializeApp } from "firebase/app";
 import {
   getDatabase, ref, onValue, set, get, update, remove, increment,
-  push, query, orderByChild, limitToLast,
+  push, query, orderByChild, limitToLast, startAt, endAt,
 } from "firebase/database";
 import { getMessaging, getToken, isSupported as isMessagingSupported } from "firebase/messaging";
 import {
@@ -271,6 +271,25 @@ export { DEFAULT_ACCOUNT };
 // ---- Store-level settings (shared across all store devices) ----
 // Branding (logo/icon/store name), the customer-side hero image, and other
 // store-wide configuration the store sets once and every device reads.
+// 1人分だけを一覧用の形で読む。会計・登録・状態変更のたびに listCustomers()
+// で全顧客を読み直していたが、それだと1会計ごとに顧客数ぶんの読み込みが
+// 発生する(2026-08-06)。変わったのは1人なので、その1人だけ差し替える。
+export async function getCustomerEntry(customerId) {
+  const acc = (await get(sref(`accounts/${customerId}`))).val();
+  if (!acc) return null;
+  return {
+    id: customerId,
+    name: acc.profile?.name || "(名前未登録)",
+    phone: acc.profile?.phone || null,
+    email: acc.profile?.email || null,
+    balance: (acc.pointBalance || 0) + (acc.depositBalance || 0),
+    pointBalance: acc.pointBalance || 0,
+    depositBalance: acc.depositBalance || 0,
+    notifyOptIn: acc.notifyOptIn || null,
+    pushTokens: acc.pushTokens || [],
+  };
+}
+
 export async function getStoreSettings() {
   const snapshot = await get(sref("storeSettings"));
   return snapshot.val() || {};
@@ -284,6 +303,16 @@ export async function saveStoreSettings(settings) {
 // read in full on every charge and sale (the server needs the bonus rates),
 // and a few hundred KB of embedded logo/icon/hero images has no business
 // riding along with that every time.
+// 状態表示の文言。店舗ごとの上書きと、全店舗共通の既定。どちらも
+// AI Console が set-status-messages.js 経由で書き換える(2026-08-06)。
+export async function getStatusMessages() {
+  const [storeSnap, sharedSnap] = await Promise.all([
+    get(sref("statusMessages")),
+    get(ref(db, "sharedStatusMessages")),
+  ]);
+  return { store: storeSnap.val() || {}, shared: sharedSnap.val() || {} };
+}
+
 export async function getBranding() {
   const snapshot = await get(sref("branding"));
   return snapshot.val() || {};
@@ -367,30 +396,90 @@ export async function getStats() {
 // store actually opens the transaction list — never on the dashboard.
 // Entries written before timestamps existed are skipped: without a date
 // there's no way to say which term they belong to.
-export async function listTransactions({ termKey = null, nameQuery = "" } = {}) {
-  // Two reads instead of one: the accounts node (small — names and balances
-  // only) and the transactions node. Only the 集計 screen calls this.
-  const [accountsSnap, txSnap] = await Promise.all([
-    get(sref("accounts")),
-    get(sref("transactions")),
-  ]);
-  const accounts = accountsSnap.val() || {};
-  const byCustomer = txSnap.val() || {};
+// 期の開始・終了(JST)を求める。termKey は "2026-H1"(4/1〜9/30)か
+// "2026-H2"(10/1〜翌3/31)。
+function termRange(termKey) {
+  const [yStr, half] = termKey.split("-");
+  const y = Number(yStr);
+  return half === "H1"
+    ? { from: new Date(y, 3, 1).getTime(), to: new Date(y, 9, 1).getTime() - 1 }
+    : { from: new Date(y, 9, 1).getTime(), to: new Date(y + 1, 3, 1).getTime() - 1 };
+}
 
+// 集計画面の取引履歴。
+//
+// 以前は accounts と transactions を丸ごと読んでから絞り込んでいたため、
+// 読む量が「その店舗の全履歴」に比例して永久に増え続けていた(2026-08-06に
+// 判明)。今は transact.js が書いている店舗単位の索引 txIndex を、ts の
+// 範囲と件数を指定して引く。読む量は「画面に出す分」だけになる。
+//
+// before は「これより古いものを続きとして読む」ためのカーソル(前ページの
+// 最後の ts)。名前での絞り込みは索引に名前を持たせていないので、顧客一覧
+// (小さい)を引いて突き合わせる。
+export async function listTransactions({
+  termKey = null,
+  nameQuery = "",
+  limit = 50,
+  before = null,
+} = {}) {
+  const range = termKey ? termRange(termKey) : null;
+  let upper = range ? range.to : Number.MAX_SAFE_INTEGER;
+  if (before) upper = Math.min(upper, before - 1);
+  const lower = range ? range.from : 0;
+
+  // 名前で絞る時は、その名前の顧客IDを先に確定させる。accounts は残高と
+  // 名前だけの小さいノードなので、ここを読むのは問題にならない。
+  let allowedIds = null;
+  let names = {};
+  const accounts = (await get(sref("accounts"))).val() || {};
+  for (const [id, acc] of Object.entries(accounts)) {
+    names[id] = acc.profile?.name || "(名前未登録)";
+  }
+  if (nameQuery) {
+    allowedIds = new Set(
+      Object.keys(names).filter((id) => names[id].includes(nameQuery) || id.includes(nameQuery))
+    );
+    if (allowedIds.size === 0) return { rows: [], nextBefore: null, done: true };
+  }
+
+  // 表示から外れる行(購入ポイント単独・取消済み・名前の絞り込み外)がある
+  // ぶん、要求件数ちょうどだと足りなくなる。少し多めに引いて、埋まるまで
+  // 遡る。
   const rows = [];
-  for (const [id, entries] of Object.entries(byCustomer)) {
-    const name = accounts[id]?.profile?.name || "(名前未登録)";
-    if (nameQuery && !name.includes(nameQuery) && !id.includes(nameQuery)) continue;
-    for (const [key, h] of Object.entries(entries || {})) {
-      if (!h.ts) continue;
-      // 購入ポイントはお会計の行に付与ポイントとして出るので、単独では出さない
-      if (h.kind === "purchasePoint") continue;
-      if (termKey && termKeyOf(new Date(h.ts)) !== termKey) continue;
-      rows.push({ ...h, id: key, customerId: id, customerName: name });
+  let cursor = upper;
+  let done = false;
+  for (let pass = 0; pass < 5 && rows.length < limit; pass += 1) {
+    const snap = await get(
+      query(sref("txIndex"), orderByChild("ts"), startAt(lower), endAt(cursor), limitToLast(limit * 2))
+    );
+    const batch = [];
+    snap.forEach((child) => {
+      batch.push({ id: child.key, ...child.val() });
+    });
+    if (batch.length === 0) {
+      done = true;
+      break;
+    }
+    batch.sort((a, b) => b.ts - a.ts);
+    for (const h of batch) {
+      if (h.kind === "purchasePoint") continue; // お会計の行に付与分として出る
+      if (h.canceled) continue;
+      if (allowedIds && !allowedIds.has(h.customerId)) continue;
+      rows.push({ ...h, customerName: names[h.customerId] || "(名前未登録)" });
+      if (rows.length >= limit) break;
+    }
+    cursor = batch[batch.length - 1].ts - 1;
+    if (cursor < lower) {
+      done = true;
+      break;
     }
   }
-  rows.sort((a, b) => b.ts - a.ts);
-  return rows;
+
+  return {
+    rows,
+    nextBefore: rows.length ? rows[rows.length - 1].ts : null,
+    done: done || rows.length < limit,
+  };
 }
 
 // Reference-date (基準日) snapshots. The scheduled Netlify function writes
