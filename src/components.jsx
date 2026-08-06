@@ -58,13 +58,11 @@ const RANKS = [
 ];
 
 // Recommended embed sizes for store branding uploads — kept in one place so
-// the settings screen's guidance text and the actual header/hero rendering agree.
+// the settings screen's guidance text and the actual header rendering agree.
 const BRANDING_SIZES = {
   logoWidth: 180, // px — the horizontal logo fills this width, height fixed below
   logoHeight: 36, // px — matches the icon's height so the header doesn't jump
   iconSize: 200, // px — recommended square upload size for the icon (displayed smaller)
-  heroWidth: 800, // px — recommended width for the customer-side hero banner
-  heroHeight: 280, // px — recommended height for the customer-side hero banner
 };
 
 // ---- Initial (placeholder) brand images ----
@@ -96,22 +94,14 @@ export const PICO_PLACEHOLDER = {
       <text x="100" y="132" text-anchor="middle" font-family="sans-serif" font-size="96" font-weight="bold" fill="#FFFFFF">P</text>
     </svg>`
   ),
-  hero: svgUri(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="280" viewBox="0 0 800 280">
-      <rect width="800" height="280" fill="#FBF7F0"/>
-      <circle cx="700" cy="60" r="120" fill="#FFE4DA"/>
-      <circle cx="96" cy="140" r="34" fill="#FF7A59"/>
-      <text x="152" y="132" font-family="sans-serif" font-size="46" font-weight="bold" fill="#0E6E5C">PicoPay</text>
-      <text x="152" y="176" font-family="sans-serif" font-size="22" fill="#6B7A76">ピコッと払って、ポイントもピコッ!</text>
-    </svg>`
-  ),
 };
 
 // Brand images have three states, and they have to stay distinguishable:
 //   undefined / null → never touched, so show the placeholder
 //   ""               → the store deliberately deleted it, so show nothing
 //                      (and warn, since e.g. the home-screen icon goes missing)
-//   data URI         → the store's own image
+//   URL              → the store's own image (Firebase Storage の URL。
+//                      2026-08-06 以前は data URI をそのまま保持していた)
 // Deletion is stored as "" rather than null because writing null to Firebase
 // removes the key entirely, which would read back as "never touched".
 export function resolveBrandImage(value, placeholder) {
@@ -2629,8 +2619,6 @@ function StoreBrandingSettings({ storeSettings, onSave, branding = {}, onSaveBra
   const [storeName, setStoreName] = useState(storeSettings.storeName || "");
   const [storeNameFont, setStoreNameFont] = useState(storeSettings.storeNameFont || "gothic");
   const [storeNameWeight, setStoreNameWeight] = useState(storeSettings.storeNameWeight || "normal");
-  const [heroImage, setHeroImage] = useState(branding.heroImage ?? null);
-  const [showHeroOnCustomer, setShowHeroOnCustomer] = useState(storeSettings.showHeroOnCustomer || false);
   const [saved, setSaved] = useState(false);
 
   const save = async () => {
@@ -2641,9 +2629,8 @@ function StoreBrandingSettings({ storeSettings, onSave, branding = {}, onSaveBra
         storeName,
         storeNameFont,
         storeNameWeight,
-        showHeroOnCustomer,
       }),
-      onSaveBranding({ logoImage, iconImage, heroImage }),
+      onSaveBranding({ logoImage, iconImage }),
     ]);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -2651,7 +2638,6 @@ function StoreBrandingSettings({ storeSettings, onSave, branding = {}, onSaveBra
 
   const shownLogo = resolveBrandImage(logoImage, PICO_PLACEHOLDER.logo);
   const shownIcon = resolveBrandImage(iconImage, PICO_PLACEHOLDER.icon);
-  const shownHero = resolveBrandImage(heroImage, PICO_PLACEHOLDER.hero);
 
   // In "default" mode the header shows PicoPay's own branding, so the
   // home-screen icon is covered too — no warning is warranted there.
@@ -2842,35 +2828,6 @@ function StoreBrandingSettings({ storeSettings, onSave, branding = {}, onSaveBra
           )}
         </div>
       )}
-
-      <div className="mt-4 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
-        <div className="text-[11px] font-semibold" style={{ color: C.ink }}>お客様画面のヒーロー画像</div>
-        <div className="text-[10px] mt-1" style={{ color: C.mute }}>
-          推奨サイズ:横{BRANDING_SIZES.heroWidth}px × 縦{BRANDING_SIZES.heroHeight}px。お客様の決済画面の一番上に、お店の写真などを大きく表示できます
-        </div>
-        <div className="mt-1">
-          <ImageUploadButton
-            id="branding-hero"
-            label="ヒーロー画像をアップロード"
-            currentImage={shownHero}
-            onImageReady={setHeroImage}
-            onDelete={() => setHeroImage("")}
-            isDeleted={heroImage === ""}
-            maxDim={BRANDING_SIZES.heroWidth}
-          />
-        </div>
-        {shownHero && (
-          <img src={shownHero} alt="ヒーロープレビュー" className="mt-2 w-full rounded-lg" />
-        )}
-        <label className="mt-2 flex items-center justify-between text-[12px]" style={{ color: C.ink }}>
-          <span>お客様画面にこの画像を表示する</span>
-          <input
-            type="checkbox"
-            checked={showHeroOnCustomer}
-            onChange={(e) => setShowHeroOnCustomer(e.target.checked)}
-          />
-        </label>
-      </div>
 
       <button
         onClick={save}
@@ -4112,17 +4069,6 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
 
   return (
     <div className="max-w-md mx-auto px-4 pb-10">
-      {/* Store hero image — configured by the store, customer can't toggle it */}
-      {storeSettings.showHeroOnCustomer && resolveBrandImage(branding.heroImage, PICO_PLACEHOLDER.hero) && (
-        <div className="mt-4 rounded-2xl overflow-hidden">
-          <img
-            src={resolveBrandImage(branding.heroImage, PICO_PLACEHOLDER.hero)}
-            alt="お店の画像"
-            style={{ width: "100%", aspectRatio: `${BRANDING_SIZES.heroWidth} / ${BRANDING_SIZES.heroHeight}`, objectFit: "cover" }}
-          />
-        </div>
-      )}
-
       {/* Rank banner */}
       {rankingEnabled && (
         <div
