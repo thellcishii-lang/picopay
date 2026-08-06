@@ -628,6 +628,65 @@ function PointSettings({ storeSettings, onSave }) {
 }
 
 // ---------------- SYSTEM SAFETY SETTINGS (daily cap, unrelated to bonus tables) ----------------
+// ---------------- ISSUER INFO (法定表示) ----------------
+// 発行者名・使えるお店・有効期限・苦情相談窓口。資金決済法上、前払式支払手段
+// 発行者(=導入店舗)がお客様に開示する義務がある4項目。運営(the合同会社)は
+// この情報の中身に一切関与せず、店舗が自分で入力・管理する(2026年8月6日決定)。
+// termsUrlはPhoneVerifyGateの「利用規約に同意します」リンク先としても使う。
+function IssuerInfoSettings({ storeSettings, onSave }) {
+  const [issuerName, setIssuerName] = useState(storeSettings.issuerName || "");
+  const [usableStores, setUsableStores] = useState(storeSettings.usableStores || "");
+  const [expiryPolicyText, setExpiryPolicyText] = useState(storeSettings.expiryPolicyText || "");
+  const [complaintContact, setComplaintContact] = useState(storeSettings.complaintContact || "");
+  const [termsUrl, setTermsUrl] = useState(storeSettings.termsUrl || "");
+  const [saved, setSaved] = useState(false);
+
+  const save = async () => {
+    await onSave({ issuerName, usableStores, expiryPolicyText, complaintContact, termsUrl });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const fields = [
+    { label: "発行者名", value: issuerName, set: setIssuerName, placeholder: "例:株式会社◯◯(屋号:△△)" },
+    { label: "ご利用いただけるお店", value: usableStores, set: setUsableStores, placeholder: "例:◯◯店(住所)" },
+    { label: "有効期限の表記", value: expiryPolicyText, set: setExpiryPolicyText, placeholder: "例:最終ご利用日から1年間" },
+    { label: "苦情・相談窓口", value: complaintContact, set: setComplaintContact, placeholder: "例:電話番号・メールアドレス" },
+    { label: "利用規約のURL", value: termsUrl, set: setTermsUrl, placeholder: "https://…" },
+  ];
+
+  return (
+    <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+      <div className="flex items-center gap-2">
+        <ShieldCheck size={16} style={{ color: C.teal }} />
+        <span className="text-sm font-bold" style={{ color: C.ink }}>発行者情報・利用規約</span>
+      </div>
+      <div className="text-[11px] mt-1" style={{ color: C.mute }}>
+        資金決済法により、前払式支払手段の発行者(導入店舗)はお客様への情報開示が必要です。ここで入力した内容がお客様画面に表示されます。運営はこの内容には関与しません。
+      </div>
+      {fields.map((f) => (
+        <div key={f.label} className="mt-2 rounded-xl p-3" style={{ background: C.cream }}>
+          <div className="text-[11px] font-semibold" style={{ color: C.ink }}>{f.label}</div>
+          <input
+            value={f.value}
+            onChange={(e) => f.set(e.target.value)}
+            placeholder={f.placeholder}
+            className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none"
+            style={{ background: "#fff", color: C.ink }}
+          />
+        </div>
+      ))}
+      <button
+        onClick={save}
+        className="mt-3 w-full rounded-full py-2 text-sm font-bold"
+        style={{ background: C.teal, color: "#fff" }}
+      >
+        {saved ? "✓ 保存しました" : "保存"}
+      </button>
+    </div>
+  );
+}
+
 function SystemSafetySettings({ storeSettings, onSave }) {
   const [dailyCap, setDailyCap] = useState(storeSettings.dailyChargeCap ?? 100000);
   // Without a per-day limit, a customer can charge → spend → charge again and
@@ -3799,6 +3858,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
                 onLookupArea={onLookupArea}
               />
               <StoreBrandingSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} branding={branding} onSaveBranding={onSaveBranding} />
+              <IssuerInfoSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
             </>
           )}
 
@@ -4211,6 +4271,25 @@ function CustomerView({ pointBalance, depositBalance, bonusEligible, onUseBonusS
           </div>
         )}
       </div>
+
+      {/* 発行者情報等(法定表示)。店舗が入力していない項目は表示自体を省く。
+          運営はこの内容の中身に関与しない — 店舗が設定画面から入力したものを
+          そのまま出すだけ。2026-08-06決定。 */}
+      {(storeSettings.issuerName || storeSettings.usableStores || storeSettings.expiryPolicyText || storeSettings.complaintContact || storeSettings.termsUrl) && (
+        <div className="mt-4 rounded-2xl p-3 text-[10px] leading-relaxed" style={{ background: C.paper, border: `1px solid ${C.line}`, color: C.mute }}>
+          {storeSettings.issuerName && <div>発行者:{storeSettings.issuerName}</div>}
+          {storeSettings.usableStores && <div>ご利用いただけるお店:{storeSettings.usableStores}</div>}
+          {storeSettings.expiryPolicyText && <div>有効期限:{storeSettings.expiryPolicyText}</div>}
+          {storeSettings.complaintContact && <div>苦情・相談窓口:{storeSettings.complaintContact}</div>}
+          {storeSettings.termsUrl && (
+            <div className="mt-1">
+              <a href={storeSettings.termsUrl} target="_blank" rel="noreferrer" style={{ color: C.teal, textDecoration: "underline" }}>
+                利用規約を見る
+              </a>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
