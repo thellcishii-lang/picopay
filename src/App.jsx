@@ -131,11 +131,14 @@ function StoreLogin() {
 }
 
 // ---------------- CUSTOMER PHONE VERIFICATION ----------------
-function PhoneVerifyGate({ expectedPhone, onVerified }) {
+function PhoneVerifyGate({ expectedPhone, onVerified, termsUrl }) {
   const [code, setCode] = useState("");
   const [confirmation, setConfirmation] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  // 2026-08-06の決定:同意した事実は保存しない(運営は関与しない、という
+  // 整理のため)。このチェックはボタンの活性条件としてのみ使う。
+  const [agreed, setAgreed] = useState(false);
   const recaptchaContainerId = "picopay-recaptcha";
   const verifierRef = useRef(null);
 
@@ -183,12 +186,30 @@ function PhoneVerifyGate({ expectedPhone, onVerified }) {
         <div className="text-[12px] mt-1" style={{ color: C.mute }}>
           登録された電話番号({expectedPhone})宛にSMSで確認コードを送ります
         </div>
+        <label className="mt-3 flex items-start gap-2 text-[11px]" style={{ color: C.mute }}>
+          <input
+            type="checkbox"
+            checked={agreed}
+            onChange={(e) => setAgreed(e.target.checked)}
+            className="mt-0.5"
+          />
+          <span>
+            {termsUrl ? (
+              <a href={termsUrl} target="_blank" rel="noreferrer" style={{ color: C.teal, textDecoration: "underline" }}>
+                利用規約
+              </a>
+            ) : (
+              "利用規約"
+            )}
+            に同意します
+          </span>
+        </label>
         {!confirmation ? (
           <button
             onClick={send}
-            disabled={busy}
+            disabled={busy || !agreed}
             className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
-            style={{ background: C.teal, color: "#fff", opacity: busy ? 0.6 : 1 }}
+            style={{ background: agreed ? C.teal : C.line, color: agreed ? "#fff" : C.mute, opacity: busy ? 0.6 : 1 }}
           >
             {busy ? "送信中…" : "SMSを送信する"}
           </button>
@@ -203,9 +224,9 @@ function PhoneVerifyGate({ expectedPhone, onVerified }) {
             />
             <button
               onClick={verify}
-              disabled={busy || !code}
+              disabled={busy || !code || !agreed}
               className="mt-2 w-full rounded-full py-2.5 text-sm font-bold"
-              style={{ background: code ? C.teal : C.line, color: code ? "#fff" : C.mute, opacity: busy ? 0.6 : 1 }}
+              style={{ background: code && agreed ? C.teal : C.line, color: code && agreed ? "#fff" : C.mute, opacity: busy ? 0.6 : 1 }}
             >
               {busy ? "確認中…" : "確認する"}
             </button>
@@ -607,8 +628,41 @@ export default function App() {
           <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
             <div className="text-sm" style={{ color: C.mute }}>読み込み中…</div>
           </div>
+        ) : storeSettings.billingStatus === "locked" ? (
+          // 60日ロック後はスタッフのログインも不可。ここに来る時点で認証は
+          // 通っているが、それ以上先の画面は見せない。
+          <div className="max-w-md mx-auto px-4 pt-10">
+            <div className="rounded-2xl p-4 text-center" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+              <div className="text-sm font-bold" style={{ color: C.ink }}>
+                このアカウントはご利用いただけません
+              </div>
+              <div className="text-[12px] mt-2" style={{ color: C.mute }}>
+                お支払いの確認が取れていないため、サービスをご利用いただけない状態です。再開をご希望の場合は、再度お申し込みください。
+              </div>
+              <button
+                onClick={storeSignOut}
+                className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
+                style={{ background: C.cream, color: C.mute }}
+              >
+                ログアウト
+              </button>
+            </div>
+          </div>
         ) : (
           <>
+            {storeSettings.billingStatus === "suspended" && (
+              <div className="max-w-md mx-auto px-4 pt-4">
+                <div className="rounded-xl p-3 text-[12px]" style={{ background: "#FDEDED", color: "#B3261E", border: "1px solid #F3C9C9" }}>
+                  お支払いの確認が取れておらず、決済・チャージ機能が停止しています。
+                  {storeSettings.billingLockAt && (
+                    <>
+                      {new Date(storeSettings.billingLockAt).toLocaleDateString("ja-JP")}
+                      までにお支払いが確認できない場合、ログインもできなくなります。
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
             <StoreView
               totalBalance={totalBalance}
               onCharge={handleCharge}
@@ -687,6 +741,7 @@ export default function App() {
         <PhoneVerifyGate
           expectedPhone={myPhone}
           onVerified={() => setPhoneVerified(true)}
+          termsUrl={storeSettings.termsUrl}
         />
       ) : !accountLoaded ? (
         <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
@@ -703,20 +758,45 @@ export default function App() {
             </div>
           </div>
         </div>
+      ) : storeSettings.billingStatus === "suspended" || storeSettings.billingStatus === "locked" ? (
+        // 店舗自体が停止中(引き落とし失敗25日後 or 解約30日後、いずれも到達済み)。
+        // 個々のお客様のアカウント状態とは別の、店舗単位の停止。
+        <div className="max-w-md mx-auto px-4 pt-8">
+          <div className="rounded-2xl p-4 text-center" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+            <div className="text-sm font-bold" style={{ color: C.ink }}>
+              現在ご利用出来ない状況です
+            </div>
+            <div className="text-[12px] mt-2" style={{ color: C.mute }}>
+              残高がある場合などは、スクリーンショットなどで保存をしてください。
+            </div>
+          </div>
+        </div>
       ) : (
-        <CustomerView
-          pointBalance={account.pointBalance || 0}
-          depositBalance={account.depositBalance || 0}
-          bonusEligible={account.bonusEligible || false}
-          onUseBonusSpin={handleUseBonusSpin}
-          history={myTransactions}
-          rankingEnabled={rankingEnabled}
-          customerId={myCustomerId}
-          storeSettings={storeSettings}
-          branding={branding}
-          notifyOptIn={account.notifyOptIn || null}
-          onUpdateNotifyPrefs={(prefs) => handleUpdateNotifyPrefs(myCustomerId, prefs)}
-        />
+        <>
+          {storeSettings.billingStatus === "active" && storeSettings.billingSuspendAt && (
+            // 停止前の予告。引き落とし失敗・解約のいずれかが検知された時点から、
+            // 実際に止まる(suspended化する)までの間ずっと表示する。
+            <div className="max-w-md mx-auto px-4 pt-4">
+              <div className="rounded-xl p-3 text-[12px]" style={{ background: "#FFF6E5", color: "#8A6100", border: "1px solid #F0DBA0" }}>
+                {new Date(storeSettings.billingSuspendAt).toLocaleDateString("ja-JP")}
+                までご利用いただけます。残高がある場合はご利用店舗にご確認ください。
+              </div>
+            </div>
+          )}
+          <CustomerView
+            pointBalance={account.pointBalance || 0}
+            depositBalance={account.depositBalance || 0}
+            bonusEligible={account.bonusEligible || false}
+            onUseBonusSpin={handleUseBonusSpin}
+            history={myTransactions}
+            rankingEnabled={rankingEnabled}
+            customerId={myCustomerId}
+            storeSettings={storeSettings}
+            branding={branding}
+            notifyOptIn={account.notifyOptIn || null}
+            onUpdateNotifyPrefs={(prefs) => handleUpdateNotifyPrefs(myCustomerId, prefs)}
+          />
+        </>
       )}
     </div>
   );
