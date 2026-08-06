@@ -38,7 +38,11 @@
           ".read": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId",
           "$customerId": {
             ".read": "auth != null && (root.child('storeAdmins').child(auth.uid).val() === $storeId || auth.token.phone_number == root.child('stores').child($storeId).child('accounts').child($customerId).child('profile/phone').val())",
-            ".write": false
+            ".write": false,
+            ".indexOn": [
+              "ts",
+              "batchId"
+            ]
           }
         },
         "idPhotos": {
@@ -74,6 +78,21 @@
         "ownerCode": {
           ".read": false,
           ".write": false
+        },
+        "branding": {
+          ".read": true,
+          ".write": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId"
+        },
+        "txIndex": {
+          ".read": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId",
+          ".write": false,
+          ".indexOn": [
+            "ts"
+          ]
+        },
+        "statusMessages": {
+          ".read": true,
+          ".write": false
         }
       }
     },
@@ -97,6 +116,10 @@
     },
     "$other": {
       ".read": false,
+      ".write": false
+    },
+    "sharedStatusMessages": {
+      ".read": true,
       ".write": false
     }
   }
