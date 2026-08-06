@@ -43,10 +43,14 @@ exports.handler = async (event) => {
     return { statusCode: 401, body: JSON.stringify({ error: "認証できませんでした" }) };
   }
 
-  const { email, password, companyName, storeName } = body;
+  const { email, password, companyName, storeName, squareSubscriptionId } = body;
   if (!email || !password) {
     return { statusCode: 400, body: JSON.stringify({ error: "メールアドレスとパスワードは必須です" }) };
   }
+  // squareSubscriptionId は、この店舗がSquare側のどの契約かを示す紐付けキー。
+  // Webhook(square-webhook.js)がこのIDを頼りに店舗を特定するため、決済連携が
+  // 実装されるまでは null のまま作られる。null のままだとWebhookは店舗を
+  // 特定できず素通りする点に注意。
 
   const db = admin.database();
 
@@ -63,12 +67,22 @@ exports.handler = async (event) => {
     const storeId = await issueStoreId(db);
     const now = Date.now();
 
-    await db.ref().update({
+    const updates = {
       [`stores/${storeId}/storeSettings`]: {
         companyName: companyName || null,
         storeName: storeName || null,
-        contactEmail: email,
         createdAt: now,
+        // billingStatus は billing-status.js が日次で更新する。active以外に
+        // なるとお客様画面のバナー表示・transact.jsでの決済拒否が発動する。
+        billingStatus: "active",
+        lastPaymentAt: now,
+      },
+      // 連絡先は storeSettings に置かない。あちらはお客様の画面が読むため
+      // 公開設定で、店舗IDが連番である以上、順に叩けば集められてしまう。
+      [`stores/${storeId}/private`]: {
+        contactEmail: email,
+        adminEmail: null,
+        squareSubscriptionId: squareSubscriptionId || null,
       },
       [`stores/${storeId}/stats/startedAt`]: now,
       [`storeAdmins/${user.uid}`]: storeId,
@@ -78,8 +92,16 @@ exports.handler = async (event) => {
         contactEmail: email,
         createdAt: now,
         status: "active",
+        billingStatus: "active",
       },
-    });
+    };
+    // square-webhook.js はSquareから届くsubscription idだけを手がかりに店舗を
+    // 探すため、逆引き用の索引を別途持つ(storeIdは連番で推測可能だが、
+    // subscription idはSquare側の値なのでここでしか作れない)。
+    if (squareSubscriptionId) {
+      updates[`squareIndex/${squareSubscriptionId}`] = storeId;
+    }
+    await db.ref().update(updates);
 
     return { statusCode: 200, body: JSON.stringify({ storeId, uid: user.uid }) };
   } catch (e) {
