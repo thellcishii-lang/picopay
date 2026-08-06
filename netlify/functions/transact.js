@@ -36,6 +36,32 @@ if (!admin.apps.length) {
 
 const increment = admin.database.ServerValue.increment;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// 課金状態(有効/注意/停止/廃止)は AI Console が決めて書き込むもので、
+// PicoPay 側では一切計算しない(2026-08-06)。Square を見るのも、失敗日から
+// 25日/60日を数えるのも、メールを送るのも AI Console の仕事。ここは
+// storeSettings.serviceStatus を読んで従うだけ。
+//
+//   active     … 通常
+//   warning    … 決済失敗の通知あり。機能は使えるが店舗画面に警告を出す
+//   suspended  … 決済・チャージ停止。ログインは可能
+//   terminated … ログインも不可
+function isBlocked(settings) {
+  const st = settings.serviceStatus || "active";
+  return st === "suspended" || st === "terminated";
+}
+
+// 預かり金の失効も同じ考え方で、バッチではなく「触れた時」に判定する。
+// 最終来店日(lastVisitAt)から店舗設定の年数を過ぎていれば失効。
+function depositExpiryOf(settings, lastVisitAt, now = Date.now()) {
+  if (!settings.depositExpiryEnabled || !lastVisitAt) {
+    return { expired: false, expiresAt: null };
+  }
+  const expiresAt = lastVisitAt + (settings.depositExpiryYears || 1) * 365 * DAY_MS;
+  return { expired: now >= expiresAt, expiresAt };
+}
+
 const MAX_RATE = 20;
 const clampRate = (v) => Math.min(MAX_RATE, Math.max(0, Number(v) || 0));
 
@@ -139,6 +165,22 @@ async function runAccountAction({ db, base, customerId, action, amount, settings
         : { date: today, depositCount: 0, gachaCount: 0 };
     const next = { ...current };
 
+    // 預かり金の失効判定(2026-08-06、日次バッチをやめてここに移した)。
+    // 口座に触れるこの瞬間に、最終来店日から期間を過ぎていれば先に失効
+    // させる。こうしておけば「失効しているはずの残高で支払えてしまう」
+    // 状態が生まれない。失効した事実は effects 経由で記録に残す。
+    const expiry = depositExpiryOf(settings, current.lastVisitAt);
+    if (expiry.expired && (current.depositBalance || 0) > 0) {
+      effects.expired = {
+        amount: current.depositBalance,
+        lastVisitAt: current.lastVisitAt,
+      };
+      next.depositBalance = 0;
+    }
+    // 以降の計算は必ずこの値を使う。current.depositBalance をそのまま
+    // 参照すると、失効させたはずの残高で支払えてしまう。
+    const depositNow = expiry.expired ? 0 : current.depositBalance || 0;
+
     if (action === "charge") {
       const value = Math.floor(Number(amount) || 0);
       if (value <= 0) {
@@ -219,7 +261,7 @@ async function runAccountAction({ db, base, customerId, action, amount, settings
       }
 
       effects.statCash = value;
-      next.depositBalance = (current.depositBalance || 0) + value;
+      next.depositBalance = depositNow + value;
       next.pointBalance = (current.pointBalance || 0) + bonus + refereeBonus;
       next.dailyBonus = daily;
       if (giveReferral) next.referralBonusGiven = true;
@@ -252,7 +294,7 @@ async function runAccountAction({ db, base, customerId, action, amount, settings
       }
       const usedPoints = Math.min(current.pointBalance || 0, value);
       const remaining = value - usedPoints;
-      const usedDeposit = Math.min(current.depositBalance || 0, remaining);
+      const usedDeposit = Math.min(depositNow, remaining);
       if (usedPoints + usedDeposit < value) {
         effects.error = "残高が足りません";
         return;
@@ -294,7 +336,7 @@ async function runAccountAction({ db, base, customerId, action, amount, settings
       }
 
       next.pointBalance = (current.pointBalance || 0) - usedPoints + earned;
-      next.depositBalance = (current.depositBalance || 0) - usedDeposit;
+      next.depositBalance = depositNow - usedDeposit;
     } else if (action === "gacha") {
       if (!current.bonusEligible) {
         effects.error = "ガチャを回せる状態ではありません";
@@ -326,7 +368,7 @@ async function runAccountAction({ db, base, customerId, action, amount, settings
           }
         }
       }
-      const bonus = Math.round((current.depositBalance || 0) * (rate / 100));
+      const bonus = Math.round(depositNow * (rate / 100));
 
       daily.gachaCount = (daily.gachaCount || 0) + 1;
       next.pointBalance = (current.pointBalance || 0) + bonus;
@@ -348,6 +390,13 @@ async function runAccountAction({ db, base, customerId, action, amount, settings
         );
         effects.statPoints.gacha = bonus;
       }
+    }
+
+    // 2026-08-06決定:失効の起算日は「最終来店日」。来店＝チャージまたは
+    // お会計と定義し、ガチャ単独では更新しない(ガチャはチャージのボーナスの
+    // 一部として発生するもので、それ単体で来店が成立する行為ではないため)。
+    if (!effects.error && (action === "charge" || action === "payment")) {
+      next.lastVisitAt = Date.now();
     }
 
     return next;
@@ -391,9 +440,40 @@ async function runAccountAction({ db, base, customerId, action, amount, settings
   // concurrent charges add up correctly even though this isn't inside the
   // account transaction.
   const updates = {};
+  // 失効させた分の記録(2026-08-06決定)。決済履歴の並びには混ぜず専用
+  // ノードに置く。店舗が「失効した分だけ」を後から確認できるように。
+  if (effects.expired) {
+    const key = db.ref(`${base}/depositExpirations`).push().key;
+    updates[`${base}/depositExpirations/${key}`] = {
+      customerId,
+      expiredAmount: effects.expired.amount,
+      lastVisitAt: effects.expired.lastVisitAt,
+      expiredAt: Date.now(),
+    };
+  }
   for (const entry of effects.entries) {
     const key = db.ref(`${base}/transactions/${customerId}`).push().key;
     updates[`${base}/transactions/${customerId}/${key}`] = entry;
+    // 店舗単位の時系列索引(2026-08-06追加)。集計画面は「全顧客を新しい順に
+    // 並べて50件ずつ」という読み方をするが、取引は顧客ごとにぶら下がって
+    // いるため、以前は全顧客の全履歴を読んでから並べ直していた。読む量が
+    // 履歴とともに永久に増えるので、表示に必要な項目だけをここに複製して
+    // おき、集計画面はこの索引を ts の範囲で引く。
+    updates[`${base}/txIndex/${key}`] = {
+      customerId,
+      ts: entry.ts,
+      kind: entry.kind,
+      summary: entry.summary,
+      total: entry.total ?? null,
+      gross: entry.gross ?? null,
+      depositUsed: entry.depositUsed ?? null,
+      pointUsed: entry.pointUsed ?? null,
+      earned: entry.earned ?? null,
+      point: entry.point ?? null,
+      cash: entry.cash ?? null,
+      category: entry.category ?? null,
+      batchId: entry.batchId ?? null,
+    };
   }
   let pointTotal = 0;
   for (const [key, value] of Object.entries(effects.statPoints)) {
@@ -453,10 +533,26 @@ async function handleCancel({ db, base, customerId, transactionId }) {
   const batchId = original.batchId || transactionId;
   const term = termKeyOf(new Date(original.ts));
 
-  const ownSnap = (await db.ref(`${base}/transactions/${customerId}`).get()).val() || {};
+  // batchId で引く。以前はこの顧客の取引履歴を丸ごと読んでから絞り込んで
+  // いたが、それだと読む量がその人の履歴とともに永久に増える(2026-08-06)。
+  // batchId には firebase-rules.json でインデックスを張ってある。
+  const ownSnap =
+    (
+      await db
+        .ref(`${base}/transactions/${customerId}`)
+        .orderByChild("batchId")
+        .equalTo(batchId)
+        .get()
+    ).val() || {};
   const ownKeys = Object.entries(ownSnap)
-    .filter(([key, e]) => (e.batchId || key) === batchId && !e.canceled && e.kind !== "cancellation")
+    .filter(([, e]) => !e.canceled && e.kind !== "cancellation")
     .map(([key]) => key);
+  // batchId を持たない古い記録は、キー自体が batchId 代わりだった。その
+  // 1件だけは上のクエリに乗らないので個別に拾う。
+  if (!ownKeys.length && transactionId === batchId && !original.canceled) {
+    ownSnap[transactionId] = original;
+    ownKeys.push(transactionId);
+  }
 
   let depositDelta = 0;
   let pointDelta = 0;
@@ -490,7 +586,14 @@ async function handleCancel({ db, base, customerId, transactionId }) {
   let referrerKey = null;
   let referrerPointDelta = 0;
   if (account && account.referredBy) {
-    const referrerSnap = (await db.ref(`${base}/transactions/${account.referredBy}`).get()).val() || {};
+    const referrerSnap =
+    (
+      await db
+        .ref(`${base}/transactions/${account.referredBy}`)
+        .orderByChild("batchId")
+        .equalTo(batchId)
+        .get()
+    ).val() || {};
     for (const [key, e] of Object.entries(referrerSnap)) {
       if ((e.batchId || key) === batchId && !e.canceled && e.category === "referral") {
         referrerId = account.referredBy;
@@ -559,14 +662,26 @@ async function handleCancel({ db, base, customerId, transactionId }) {
   const updates = {};
   for (const key of ownKeys) {
     updates[`${base}/transactions/${customerId}/${key}/canceled`] = true;
+    // 索引側にも取消済みの印を付ける。集計画面はこちらを読むので、
+    // ここを更新しないと取消した分が消えずに残って見える。
+    updates[`${base}/txIndex/${key}/canceled`] = true;
   }
   const cancelKey = db.ref(`${base}/transactions/${customerId}`).push().key;
-  updates[`${base}/transactions/${customerId}/${cancelKey}`] = txEntry({
+  const cancelEntry = txEntry({
     summary: `取消: ${original.summary || ""}`,
     kind: "cancellation",
     reversalOf: transactionId,
     total: -(original.total || 0),
   });
+  updates[`${base}/transactions/${customerId}/${cancelKey}`] = cancelEntry;
+  updates[`${base}/txIndex/${cancelKey}`] = {
+    customerId,
+    ts: cancelEntry.ts,
+    kind: "cancellation",
+    summary: cancelEntry.summary,
+    total: cancelEntry.total ?? null,
+    reversalOf: transactionId,
+  };
 
   if (referrerReversed && referrerKey) {
     updates[`${base}/transactions/${referrerId}/${referrerKey}/canceled`] = true;
@@ -635,11 +750,10 @@ exports.handler = async (event) => {
       result = await handleCancel({ db, base, customerId, transactionId });
     } else if (["charge", "payment", "gacha"].includes(action)) {
       const settings = (await db.ref(`${base}/storeSettings`).get()).val() || {};
-      // billingStatusが active 以外(suspended/locked)の店舗は、画面側の
-      // バナー表示だけに頼らずここでも決済・チャージ・ガチャを拒否する。
-      // 画面のチェックだけだと、キャッシュされた古い画面や改造クライアント
-      // から素通りしてしまうため。
-      if (settings.billingStatus && settings.billingStatus !== "active") {
+      // 停止中の店舗は、画面側の表示だけに頼らずここでも決済・チャージ・
+      // ガチャを拒否する。キャッシュされた古い画面や改造クライアントから
+      // 素通りしてしまうため。
+      if (isBlocked(settings)) {
         const e = new Error("現在この店舗はご利用いただけません");
         e.statusCode = 403;
         throw e;
