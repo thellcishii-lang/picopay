@@ -630,9 +630,20 @@ exports.handler = async (event) => {
 
     let result;
     if (action === "cancel") {
+      // 取消は既に発生したお金の動きを戻すだけなので、店舗が停止中でも
+      // 引き続き許可する(停止中に打ち間違いを直せなくなる方が困る)。
       result = await handleCancel({ db, base, customerId, transactionId });
     } else if (["charge", "payment", "gacha"].includes(action)) {
       const settings = (await db.ref(`${base}/storeSettings`).get()).val() || {};
+      // billingStatusが active 以外(suspended/locked)の店舗は、画面側の
+      // バナー表示だけに頼らずここでも決済・チャージ・ガチャを拒否する。
+      // 画面のチェックだけだと、キャッシュされた古い画面や改造クライアント
+      // から素通りしてしまうため。
+      if (settings.billingStatus && settings.billingStatus !== "active") {
+        const e = new Error("現在この店舗はご利用いただけません");
+        e.statusCode = 403;
+        throw e;
+      }
       result = await runAccountAction({ db, base, customerId, action, amount, settings });
     } else {
       return { statusCode: 400, body: JSON.stringify({ error: "不明な操作です" }) };
