@@ -687,6 +687,87 @@ function IssuerInfoSettings({ storeSettings, onSave }) {
   );
 }
 
+// ---------------- DEPOSIT EXPIRY (預かり金の失効設定) ----------------
+// 2026-08-06決定:起算日は最終来店日(lastVisitAt、transact.jsがチャージ・
+// お会計のたびに記録)。初期値オフ。オンの店舗のみdeposit-expiry.js(日次
+// バッチ)の対象になる。「執行通知」は失効1ヶ月前からお客様画面に予告を
+// 出し続けるかどうかの別スイッチ(オフにすると全顧客一律で予告が消える)。
+function DepositExpirySettings({ storeSettings, onSave }) {
+  const [enabled, setEnabled] = useState(storeSettings.depositExpiryEnabled ?? false);
+  const [years, setYears] = useState(storeSettings.depositExpiryYears ?? 1);
+  const [noticeEnabled, setNoticeEnabled] = useState(storeSettings.depositExpiryNoticeEnabled ?? false);
+  const [saved, setSaved] = useState(false);
+
+  const save = async () => {
+    await onSave({
+      depositExpiryEnabled: enabled,
+      depositExpiryYears: Number(years),
+      depositExpiryNoticeEnabled: noticeEnabled,
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  return (
+    <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+      <div className="flex items-center gap-2">
+        <ShieldCheck size={16} style={{ color: C.teal }} />
+        <span className="text-sm font-bold" style={{ color: C.ink }}>預かり金の失効設定</span>
+      </div>
+      <div className="text-[11px] mt-1" style={{ color: C.mute }}>
+        最終ご来店日(チャージ・お会計のいずれか)から一定期間ご来店が無いお客様の預かり残高を失効させます。ポイントの有効期限とは別枠です。
+      </div>
+
+      <label className="mt-3 flex items-center justify-between rounded-xl p-3" style={{ background: C.cream }}>
+        <span className="text-[11px] font-semibold" style={{ color: C.ink }}>失効を有効にする</span>
+        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+      </label>
+
+      {enabled && (
+        <>
+          <div className="mt-2 rounded-xl p-3" style={{ background: C.cream }}>
+            <div className="text-[11px] font-semibold" style={{ color: C.ink }}>失効までの期間</div>
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              {[1, 2, 3].map((y) => (
+                <button
+                  key={y}
+                  onClick={() => setYears(y)}
+                  className="rounded-lg py-2 text-sm font-semibold"
+                  style={{
+                    background: years === y ? C.teal : "#fff",
+                    color: years === y ? "#fff" : C.mute,
+                    border: `1px solid ${years === y ? C.teal : C.line}`,
+                  }}
+                >
+                  {y}年
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <label className="mt-2 flex items-center justify-between rounded-xl p-3" style={{ background: C.cream }}>
+            <div>
+              <div className="text-[11px] font-semibold" style={{ color: C.ink }}>執行通知</div>
+              <div className="text-[10px] mt-0.5" style={{ color: C.mute }}>
+                失効の1ヶ月前から、お客様画面に予告を表示し続けます(ご来店で消えます)
+              </div>
+            </div>
+            <input type="checkbox" checked={noticeEnabled} onChange={(e) => setNoticeEnabled(e.target.checked)} />
+          </label>
+        </>
+      )}
+
+      <button
+        onClick={save}
+        className="mt-3 w-full rounded-full py-2 text-sm font-bold"
+        style={{ background: C.teal, color: "#fff" }}
+      >
+        {saved ? "✓ 保存しました" : "保存"}
+      </button>
+    </div>
+  );
+}
+
 function SystemSafetySettings({ storeSettings, onSave }) {
   const [dailyCap, setDailyCap] = useState(storeSettings.dailyChargeCap ?? 100000);
   // Without a per-day limit, a customer can charge → spend → charge again and
@@ -1358,18 +1439,23 @@ function ChargeScreen({ onCharge, onDeduct }) {
       </div>
 
       {screenMode === "purchase" && (
-        <label className="mt-2 flex items-center gap-2 text-[11px]" style={{ color: C.mute }}>
-          <input
-            type="checkbox"
-            checked={posConnected}
-            onChange={(e) => {
-              setPosConnected(e.target.checked);
-              if (e.target.checked) setAmount(posMockAmount);
-              reset();
-            }}
-          />
-          POS連携済み(Airレジ/スマレジ/ユビレジ)
-        </label>
+        <>
+          <label className="mt-2 flex items-center gap-2 text-[11px]" style={{ color: C.mute }}>
+            <input
+              type="checkbox"
+              checked={posConnected}
+              onChange={(e) => {
+                setPosConnected(e.target.checked);
+                if (e.target.checked) setAmount(posMockAmount);
+                reset();
+              }}
+            />
+            POS連携済み(スマレジ)
+          </label>
+          <div className="text-[10px] mt-0.5" style={{ color: C.mute }}>
+            連携しなくても手入力でそのままご利用いただけます
+          </div>
+        </>
       )}
 
       <div className="mt-3 flex items-center rounded-lg" style={{ background: C.cream }}>
@@ -2876,7 +2962,7 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onCan
   const [txTerm, setTxTerm] = useState(currentTerm);
   const [nameQuery, setNameQuery] = useState("");
   const [rows, setRows] = useState([]);
-  const [visible, setVisible] = useState(PAGE_SIZE);
+  const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
   const [cancelingId, setCancelingId] = useState(null);
   const [cancelError, setCancelError] = useState(null);
@@ -2908,12 +2994,32 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onCan
   const depositTotal = customers.reduce((sum, c) => sum + (c.depositBalance || 0), 0);
   const pointTotal = customers.reduce((sum, c) => sum + (c.pointBalance || 0), 0);
 
+  // 表示するぶんだけDBから引く(2026-08-06)。以前は全件を読んでから
+  // 画面側で50件ずつ切り出していたため、読む量が店舗の全履歴に比例して
+  // 増え続けていた。今は「もっと見る」を押した時に初めて続きを取りに行く。
   const loadTx = async (term, query) => {
     setLoading(true);
     try {
-      const result = await onLoadTransactions({ termKey: term, nameQuery: query });
-      setRows(result);
-      setVisible(PAGE_SIZE);
+      const result = await onLoadTransactions({ termKey: term, nameQuery: query, limit: PAGE_SIZE });
+      setRows(result.rows);
+      setDone(result.done);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadMoreTx = async () => {
+    if (loading || done || rows.length === 0) return;
+    setLoading(true);
+    try {
+      const result = await onLoadTransactions({
+        termKey: txTerm,
+        nameQuery,
+        limit: PAGE_SIZE,
+        before: rows[rows.length - 1].ts,
+      });
+      setRows((prev) => [...prev, ...result.rows]);
+      setDone(result.done);
     } finally {
       setLoading(false);
     }
@@ -2926,8 +3032,8 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onCan
 
   const shownTerms = showAllTerms ? termKeys : termKeys.slice(0, 6);
 
-  // Exports everything currently loaded (the whole filtered term), not just
-  // the 50 rows on screen — otherwise the file would silently be partial.
+  // 画面に読み込み済みの行だけを書き出す。全期間ぶんを毎回読むのをやめた
+  // ため(2026-08-06)、「もっと見る」で読んだところまでが対象になる。
   const exportTxCsv = () => {
     downloadCsv(
       `picopay-transactions-${txTerm}.csv`,
@@ -3172,7 +3278,7 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onCan
                   </button>
                 </div>
                 <div className="mt-1 space-y-2">
-                  {rows.slice(0, visible).map((r, i) => (
+                  {rows.map((r, i) => (
                     <div
                       key={i}
                       className="rounded-xl p-3"
@@ -3227,13 +3333,13 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onCan
                 {cancelError && (
                   <div className="mt-2 text-[11px] font-semibold" style={{ color: C.coral }}>{cancelError}</div>
                 )}
-                {visible < rows.length && (
+                {!done && (
                   <button
-                    onClick={() => setVisible((v) => v + PAGE_SIZE)}
+                    onClick={loadMoreTx}
                     className="mt-2 w-full rounded-lg py-2 text-[11px] font-semibold"
                     style={{ background: C.cream, color: C.mute }}
                   >
-                    もっと見る(残り{rows.length - visible}件)
+                    {loading ? "読み込み中…" : "もっと見る"}
                   </button>
                 )}
               </>
@@ -3859,6 +3965,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
               />
               <StoreBrandingSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} branding={branding} onSaveBranding={onSaveBranding} />
               <IssuerInfoSettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
+              <DepositExpirySettings storeSettings={storeSettings} onSave={onSaveStoreSettings} />
             </>
           )}
 
