@@ -9,7 +9,9 @@ import {
   updateNotifyPrefs,
   createAccount,
   listCustomers,
+  getCustomerEntry,
   getStoreSettings,
+  getStatusMessages,
   getBranding,
   saveBranding,
   saveStoreSettings,
@@ -56,6 +58,35 @@ function modeFromPath() {
 }
 
 // ---------------- STORE LOGIN ----------------
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// 表示する文言は、店舗ごとの設定 → 全店舗共通 → 組み込みの既定 の順に
+// 探す。AI Console から set-status-messages.js で書き換えられる。
+const DEFAULT_STATUS_MESSAGES = {
+  warningStore: "重要なお知らせがあります。登録メールをご確認下さい。",
+  suspendedStore: "現在、決済・チャージがご利用いただけません。登録メールをご確認下さい。",
+  suspendedCustomer:
+    "現在ご利用出来ない状況となっております。ご利用の店舗にお問い合わせください。",
+  terminatedStore: "このアカウントはご利用いただけません。",
+  terminatedCustomer:
+    "現在ご利用出来ない状況となっております。ご利用の店舗にお問い合わせください。",
+};
+
+function statusMessage(key, storeMessages = {}, sharedMessages = {}) {
+  return storeMessages[key] || sharedMessages[key] || DEFAULT_STATUS_MESSAGES[key];
+}
+
+// 失効予告の期日。店舗が「執行通知」をオフにしたら即座に消えるよう、
+// 判定そのものが店舗設定を見ている。ご来店(チャージ・お会計)で
+// lastVisitAt が進めば、次の描画で自動的に消える。
+function depositExpiryNoticeAt(settings = {}, lastVisitAt, now = Date.now()) {
+  if (!settings.depositExpiryEnabled || !settings.depositExpiryNoticeEnabled) return null;
+  if (!lastVisitAt) return null;
+  const expiresAt = lastVisitAt + (settings.depositExpiryYears || 1) * 365 * DAY_MS;
+  if (expiresAt <= now) return null; // 既に失効(次の決済時にサーバーが0にする)
+  return expiresAt - now <= 30 * DAY_MS ? expiresAt : null;
+}
+
 function StoreLogin() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -297,14 +328,18 @@ export default function App() {
   // every panel starts on its default and shows those instead — which is why
   // a reload looked like the settings had reset. The screen now waits.
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [statusMessages, setStatusMessages] = useState({ store: {}, shared: {} });
   useEffect(() => {
     if (!storeId) return;
     setSettingsLoaded(false);
-    Promise.all([getStoreSettings(), getBranding()]).then(([settings, brandingData]) => {
-      setStoreSettingsState(settings);
-      setBrandingState(brandingData);
-      setSettingsLoaded(true);
-    });
+    Promise.all([getStoreSettings(), getBranding(), getStatusMessages()]).then(
+      ([settings, brandingData, msgs]) => {
+        setStatusMessages(msgs);
+        setStoreSettingsState(settings);
+        setBrandingState(brandingData);
+        setSettingsLoaded(true);
+      }
+    );
   }, [mode, storeId]);
 
   // rankingEnabled/weatherEnabled used to be local, per-device state, which
@@ -334,10 +369,17 @@ export default function App() {
       document.getElementById("app-favicon")?.setAttribute("href", favicon);
       document.getElementById("app-touch-icon")?.setAttribute("href", favicon);
 
+      // start_url は「今どちらの画面を開いているか」に合わせる。固定で
+      // /store にしていると、お客様がホーム画面に追加したアイコンから
+      // 店舗用ログイン画面が開いてしまう不具合が実機で確認されたため
+      // (2026-08-06)。myCustomerIdはこのuseEffectより後で定義されるため
+      // (参照エラーになる)ここでは使わず、パスの種別だけで切り替える。
+      const startUrl = window.location.pathname.startsWith("/store") ? "/store" : "/customer";
+
       const manifest = {
         name: storeSettings.storeName || "PicoPay",
         short_name: storeSettings.storeName || "PicoPay",
-        start_url: "/store",
+        start_url: startUrl,
         display: "standalone",
         background_color: "#FBF7F0",
         theme_color: "#0E6E5C",
@@ -357,6 +399,21 @@ export default function App() {
   const refreshCustomers = useCallback(async () => {
     const list = await listCustomers();
     setCustomers(list);
+  }, []);
+
+  // 1人だけ差し替える版。会計・取消・状態変更のように「誰が変わったか」が
+  // 分かっている操作では、全顧客を読み直さずこちらを使う(2026-08-06)。
+  const refreshOneCustomer = useCallback(async (customerId) => {
+    if (!customerId) return;
+    const entry = await getCustomerEntry(customerId);
+    setCustomers((prev) => {
+      if (!entry) return prev.filter((c) => c.id !== customerId);
+      const idx = prev.findIndex((c) => c.id === customerId);
+      if (idx === -1) return [...prev, entry];
+      const next = [...prev];
+      next[idx] = entry;
+      return next;
+    });
   }, []);
   useEffect(() => {
     if (mode === "store" && authUser && storeId) refreshCustomers();
@@ -412,23 +469,24 @@ export default function App() {
 
   const handleRegisterCustomer = async ({ name, phone, email, requireVerification, referredBy }) => {
     const customerId = await createAccount({ name, phone, email, requireVerification, referredBy });
-    await refreshCustomers();
+    await refreshOneCustomer(customerId);
     return customerId;
   };
 
   const handleSetCustomerStatus = async (customerId, status) => {
     await setCustomerStatus(customerId, status);
-    await refreshCustomers();
+    await refreshOneCustomer(customerId);
   };
 
   const handleDeleteCustomer = async (customerId) => {
     await deleteCustomerPermanently(customerId);
-    await refreshCustomers();
+    // getCustomerEntry が null を返すので、一覧からも取り除かれる
+    await refreshOneCustomer(customerId);
   };
 
   const handleReissueCustomer = async ({ customerId, newPhone, idPhotoDataUrl }) => {
     await reissueCustomerAccess({ customerId, newPhone, idPhotoDataUrl });
-    await refreshCustomers();
+    await refreshOneCustomer(customerId);
   };
 
   const handleUpdateNotifyPrefs = async (customerId, prefs) => {
@@ -458,20 +516,20 @@ export default function App() {
   const handleCharge = async (amount, customerId) => {
     if (!customerId) return;
     await chargeAccount(customerId, amount);
-    refreshCustomers();
+    refreshOneCustomer(customerId);
     refreshStats();
   };
 
   const handleDeduct = async (amount, customerId) => {
     if (!customerId) return;
     await payFromAccount(customerId, amount);
-    refreshCustomers();
+    refreshOneCustomer(customerId);
     refreshStats();
   };
 
   const handleCancelTransaction = async (customerId, transactionId) => {
     const result = await cancelTransaction(customerId, transactionId);
-    refreshCustomers();
+    refreshOneCustomer(customerId);
     refreshStats();
     return result;
   };
@@ -589,6 +647,11 @@ export default function App() {
     setMyCustomerId(id);
   };
 
+  // AI Console が書いた状態をそのまま読む。日数の計算は一切しない。
+  const serviceStatus = storeSettings.serviceStatus || "active";
+  const msg = (key) => statusMessage(key, statusMessages.store, statusMessages.shared);
+  const expiryNoticeAt = depositExpiryNoticeAt(storeSettings, account?.lastVisitAt);
+
   const needsPhoneGate = mode === "customer" && myPhone !== undefined && myPhone && !phoneVerified;
 
   return (
@@ -628,16 +691,13 @@ export default function App() {
           <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
             <div className="text-sm" style={{ color: C.mute }}>読み込み中…</div>
           </div>
-        ) : storeSettings.billingStatus === "locked" ? (
+        ) : serviceStatus === "terminated" ? (
           // 60日ロック後はスタッフのログインも不可。ここに来る時点で認証は
           // 通っているが、それ以上先の画面は見せない。
           <div className="max-w-md mx-auto px-4 pt-10">
             <div className="rounded-2xl p-4 text-center" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
               <div className="text-sm font-bold" style={{ color: C.ink }}>
-                このアカウントはご利用いただけません
-              </div>
-              <div className="text-[12px] mt-2" style={{ color: C.mute }}>
-                お支払いの確認が取れていないため、サービスをご利用いただけない状態です。再開をご希望の場合は、再度お申し込みください。
+                {msg("terminatedStore")}
               </div>
               <button
                 onClick={storeSignOut}
@@ -650,16 +710,17 @@ export default function App() {
           </div>
         ) : (
           <>
-            {storeSettings.billingStatus === "suspended" && (
+            {/* 決済失敗の警告(warning)と停止(suspended)。文言はAI Console
+                から差し替えられる。日付は出さない — 具体的な期日は
+                AI Consoleが送るメールの中にある。 */}
+            {(serviceStatus === "warning" || serviceStatus === "suspended") && (
               <div className="max-w-md mx-auto px-4 pt-4">
-                <div className="rounded-xl p-3 text-[12px]" style={{ background: "#FDEDED", color: "#B3261E", border: "1px solid #F3C9C9" }}>
-                  お支払いの確認が取れておらず、決済・チャージ機能が停止しています。
-                  {storeSettings.billingLockAt && (
-                    <>
-                      {new Date(storeSettings.billingLockAt).toLocaleDateString("ja-JP")}
-                      までにお支払いが確認できない場合、ログインもできなくなります。
-                    </>
-                  )}
+                <div
+                  className="rounded-xl p-3 text-[12px] font-bold flex items-start gap-2"
+                  style={{ background: "#FFF6E5", color: "#B3261E", border: "1px solid #F0DBA0" }}
+                >
+                  <span aria-hidden="true">⚠️</span>
+                  <span>{msg(serviceStatus === "warning" ? "warningStore" : "suspendedStore")}</span>
                 </div>
               </div>
             )}
@@ -758,28 +819,28 @@ export default function App() {
             </div>
           </div>
         </div>
-      ) : storeSettings.billingStatus === "suspended" || storeSettings.billingStatus === "locked" ? (
-        // 店舗自体が停止中(引き落とし失敗25日後 or 解約30日後、いずれも到達済み)。
-        // 個々のお客様のアカウント状態とは別の、店舗単位の停止。
+      ) : serviceStatus === "suspended" || serviceStatus === "terminated" ? (
+        // 店舗自体が停止中。AI Console が書いた状態を読んでいるだけで、
+        // 何日経ったかの計算はこちらでは持たない。個々のお客様の
+        // アカウント状態(ブラックリスト等)とは別の、店舗単位の停止。
         <div className="max-w-md mx-auto px-4 pt-8">
           <div className="rounded-2xl p-4 text-center" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
             <div className="text-sm font-bold" style={{ color: C.ink }}>
-              現在ご利用出来ない状況です
-            </div>
-            <div className="text-[12px] mt-2" style={{ color: C.mute }}>
-              残高がある場合などは、スクリーンショットなどで保存をしてください。
+              {msg(serviceStatus === "terminated" ? "terminatedCustomer" : "suspendedCustomer")}
             </div>
           </div>
         </div>
       ) : (
         <>
-          {storeSettings.billingStatus === "active" && storeSettings.billingSuspendAt && (
-            // 停止前の予告。引き落とし失敗・解約のいずれかが検知された時点から、
-            // 実際に止まる(suspended化する)までの間ずっと表示する。
+          {/* 預かり金の失効予告(2026-08-06決定)。判定そのものが店舗設定を
+              見ているので、店舗が「執行通知」をオフにした瞬間に全顧客一律で
+              消える。ご来店(チャージ・お会計)でlastVisitAtが進めば、
+              次の描画で自動的に消える。 */}
+          {expiryNoticeAt && (
             <div className="max-w-md mx-auto px-4 pt-4">
               <div className="rounded-xl p-3 text-[12px]" style={{ background: "#FFF6E5", color: "#8A6100", border: "1px solid #F0DBA0" }}>
-                {new Date(storeSettings.billingSuspendAt).toLocaleDateString("ja-JP")}
-                までご利用いただけます。残高がある場合はご利用店舗にご確認ください。
+                預かり残高は{new Date(expiryNoticeAt).toLocaleDateString("ja-JP")}
+                に失効します。ご来店・ご利用で継続されます。
               </div>
             </div>
           )}
