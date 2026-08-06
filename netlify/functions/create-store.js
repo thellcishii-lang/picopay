@@ -72,9 +72,9 @@ exports.handler = async (event) => {
         companyName: companyName || null,
         storeName: storeName || null,
         createdAt: now,
-        // billingStatus は billing-status.js が日次で更新する。active以外に
-        // なるとお客様画面のバナー表示・transact.jsでの決済拒否が発動する。
-        billingStatus: "active",
+        // 課金状態そのものは保存しない(2026-08-06)。square-webhook.js が
+        // 記録する paymentFailedAt / cancelRequestedAt と、この lastPaymentAt
+        // の3つの日付から、必要になった時点で計算する。
         lastPaymentAt: now,
       },
       // 連絡先は storeSettings に置かない。あちらはお客様の画面が読むため
@@ -92,7 +92,6 @@ exports.handler = async (event) => {
         contactEmail: email,
         createdAt: now,
         status: "active",
-        billingStatus: "active",
       },
     };
     // square-webhook.js はSquareから届くsubscription idだけを手がかりに店舗を
