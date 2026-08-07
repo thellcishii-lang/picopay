@@ -56,7 +56,7 @@ import {
 function modeFromPath() {
   const path = window.location.pathname;
   if (path.startsWith("/customer")) return "customer";
-  if (path.startsWith("/store")) return "store";
+  if (path.startsWith("/customer")) return "customer";
   // トップが開かれた時。iOSはblob:のmanifestを読めず開く先が効かないため、
   // ホーム画面のアイコンからだとここに来る。端末にお客様IDが残っていれば
   // お客様として扱う。
