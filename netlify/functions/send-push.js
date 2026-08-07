@@ -30,23 +30,55 @@ exports.handler = async (event) => {
   }
 
   try {
+    // FCM Admin SDK v12 では、Web Push の画像・リンクは webpush 配下に設定
     const message = {
       notification: {
         title: title || "PicoPay",
         body,
-        ...(icon ? { imageUrl: icon } : {}),
+      },
+      webpush: {
+        notification: {
+          // 小さなアイコン（ブラウザ通知バー用）
+          icon: icon || undefined,
+          // 大きな画像（通知カード内に表示される）
+          image: icon || undefined,
+          // クリック時の遷移先（同じオリジン内のパス）
+          click_action: "/",
+        },
+        fcm_options: {
+          link: "/",
+        },
       },
       tokens,
     };
+
     const result = await admin.messaging().sendEachForMulticast(message);
+
+    // デバッグ：失敗したトークンと理由をログに残す（Netlify Functions のログで確認可能）
+    const failures = result.responses
+      .map((r, i) => ({ success: r.success, error: r.error, token: tokens[i] }))
+      .filter((r) => !r.success);
+
+    if (failures.length > 0) {
+      console.error(
+        `[send-push] ${failures.length}/${tokens.length} failures:`,
+        failures.map((f) => ({ token: f.token.slice(0, 20) + "...", error: f.error?.message }))
+      );
+    }
+
     return {
       statusCode: 200,
       body: JSON.stringify({
         successCount: result.successCount,
         failureCount: result.failureCount,
+        failures: failures.map((f) => ({
+          tokenPreview: f.token.slice(0, 20) + "...",
+          error: f.error?.message,
+        })),
       }),
     };
   } catch (e) {
+    console.error("[send-push] Exception:", e);
     return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
   }
 };
