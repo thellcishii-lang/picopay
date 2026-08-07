@@ -163,7 +163,13 @@ async function runAccountAction({ db, base, customerId, action, amount, settings
 
   const txResult = await accountRef.transaction((current) => {
     effects = { entries: [], statPoints: {}, statCash: 0, rate: null, error: null, crossAccount: null };
-    if (!current) return; // まだ読めていない。Firebase が本当の値で呼び直す
+    // null が渡るのは、ローカルのキャッシュが古くてまだ本当の値を持って
+    // いない場合と、本当に存在しない場合の2つ。ここで何も返さない
+    // (undefined)と Firebase は即座に「中止」として終わり、再試行しない。
+    // null を返せば、キャッシュが古いだけなら Firebase がサーバーの値で
+    // 呼び直し、本当に無ければ null のまま確定する(何も書かれない)。
+    // 存在しないケースは、この transaction に入る前の .get() で弾いている。
+    if (!current) return null;
     if (current.status && current.status !== "active") {
       effects.error =
         current.status === "blacklisted"
@@ -445,7 +451,7 @@ async function runAccountAction({ db, base, customerId, action, amount, settings
     const refOk = refSnap.exists() && (!refSnap.val().status || refSnap.val().status === "active");
     const refResult = refOk
       ? await refRef.transaction((current) => {
-          if (!current) return; // まだ読めていない
+          if (!current) return null; // キャッシュが古いだけなら呼び直される
           if (current.status && current.status !== "active") return;
           return { ...current, pointBalance: (current.pointBalance || 0) + effects.crossAccount.pointDelta };
         })
@@ -560,7 +566,13 @@ async function handleDeleteCustomer({ db, base, storeId, customerId }) {
   }
 
   const txResult = await accRef.transaction((current) => {
-    if (!current) return; // まだ読めていない。Firebase が本当の値で呼び直す
+    // null が渡るのは、ローカルのキャッシュが古くてまだ本当の値を持って
+    // いない場合と、本当に存在しない場合の2つ。ここで何も返さない
+    // (undefined)と Firebase は即座に「中止」として終わり、再試行しない。
+    // null を返せば、キャッシュが古いだけなら Firebase がサーバーの値で
+    // 呼び直し、本当に無ければ null のまま確定する(何も書かれない)。
+    // 存在しないケースは、この transaction に入る前の .get() で弾いている。
+    if (!current) return null;
     if (current.status === "deleted") return; // 既に削除済み
     zeroed = {
       deposit: current.depositBalance || 0,
@@ -740,7 +752,7 @@ async function handleCancel({ db, base, customerId, transactionId }) {
     throw err;
   }
   const result = await accountRef.transaction((current) => {
-    if (!current) return; // まだ読めていない
+    if (!current) return null; // キャッシュが古いだけなら呼び直される
     const newDeposit = (current.depositBalance || 0) + depositDelta;
     const newPoint = (current.pointBalance || 0) + pointDelta;
     if (newDeposit < 0 || newPoint < 0) return; // abort — already spent
@@ -770,7 +782,7 @@ async function handleCancel({ db, base, customerId, transactionId }) {
     const refExists = (await refRef.get()).exists();
     const refResult = refExists
       ? await refRef.transaction((current) => {
-          if (!current) return; // まだ読めていない
+          if (!current) return null; // キャッシュが古いだけなら呼び直される
           const newPoint = (current.pointBalance || 0) + referrerPointDelta;
           if (newPoint < 0) return; // abort
           return { ...current, pointBalance: newPoint };
