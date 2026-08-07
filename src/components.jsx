@@ -1835,12 +1835,18 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
     }
   };
 
+  // 失敗した時に画面へ出す(2026-08-07)。以前は catch が無く、失敗しても
+  // ボタンが薄くなって元に戻るだけで、何が起きたか分からなかった。
+  const [deleteError, setDeleteError] = useState(null);
   const confirmedDelete = async () => {
     setBusy(true);
+    setDeleteError(null);
     try {
       await onDeletePermanently(customerId);
       setConfirmDelete(false);
       onDeleted && onDeleted();
+    } catch (e) {
+      setDeleteError(e?.message || "削除に失敗しました");
     } finally {
       setBusy(false);
     }
@@ -2033,6 +2039,11 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
               <div className="text-[12px] mt-2" style={{ color: C.mute }}>
                 {detail?.profile?.name}様のデータを完全に削除します。この操作は取り消せません。
               </div>
+              {deleteError && (
+                <div className="mt-2 rounded-lg px-3 py-2 text-[11px]" style={{ background: "#FDEDED", color: "#B3261E" }}>
+                  {deleteError}
+                </div>
+              )}
               <div className="mt-4 grid grid-cols-2 gap-2">
                 <button
                   onClick={() => setConfirmDelete(false)}
