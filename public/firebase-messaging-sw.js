@@ -1,5 +1,3 @@
-// This service worker runs in the background (even when the PicoPay tab is
-// closed) so push notifications can still be received and shown.
 importScripts("https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js");
 importScripts("https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js");
 
@@ -15,44 +13,54 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-// Shows the notification when a push arrives while the app isn't in the
-// foreground (e.g. screen locked, browser closed).
 messaging.onBackgroundMessage((payload) => {
-  const title = payload.notification?.title || "PicoPay";
-  const body = payload.notification?.body || "";
-  const icon = payload.notification?.icon || "/favicon.svg";
-  self.registration.showNotification(title, { body, icon });
+  console.log("[SW] Background message received:", payload);
+  
+  const title = payload.notification?.title || payload.data?.title || "PicoPay";
+  const body = payload.notification?.body || payload.data?.body || "";
+  const icon = payload.notification?.icon || payload.data?.icon || "/favicon.svg";
+  
+  const notificationOptions = {
+    body,
+    icon,
+    badge: "/favicon.svg",
+    tag: payload.data?.tag || "picopay-default",
+    data: payload.data || {},
+    requireInteraction: false,
+  };
+  
+  self.registration.showNotification(title, notificationOptions);
 });
 
-// ---- Offline fallback (2026-08-06) ----
-//
-// This lives in the same file as the messaging setup above because a scope
-// can only have one active service worker — registering a second file at
-// the same scope ("/") would silently replace this one and break push
-// notifications.
-//
-// Deliberately does NOT cache the app shell. A first version cached the
-// HTML for "/", "/store" and "/customer", but the hashed JS/CSS bundles
-// weren't cached with it: offline, the cached HTML would load and then
-// fail to fetch its own scripts, leaving a blank white screen instead of
-// the offline notice. Caching the HTML long-term also risks serving a
-// stale app after a deploy.
-//
-// So: cache nothing, and when a page navigation fails, show the offline
-// notice directly. Everything else (Firebase, Netlify Functions, the
-// bundles themselves) is left completely untouched, so nothing here can
-// ever serve a stale balance or an expired QR code.
+// 通知クリック時の処理：アプリを開く（既に開いている場合はフォーカス）
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const urlToOpen = event.notification.data?.link || "/";
+  
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((windowClients) => {
+      // 既に開いているタブがあればフォーカス
+      for (const client of windowClients) {
+        if (client.url.includes(self.location.origin) && "focus" in client) {
+          return client.focus();
+        }
+      }
+      // なければ新規で開く
+      if (clients.openWindow) {
+        return clients.openWindow(urlToOpen);
+      }
+    })
+  );
+});
+
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => {
-  // 以前のバージョンが作ったシェルキャッシュを片付ける
   event.waitUntil(
     caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
   );
   self.clients.claim();
 });
 
-// 背景・ロゴの配置はログイン画面(StoreLogin)と揃えたクリーム背景+上部ロゴ。
-// ロゴはオフラインでも確実に出るよう、外部ファイルを参照せず inline SVG。
 const OFFLINE_HTML = `<!doctype html>
 <html lang="ja">
 <head>
