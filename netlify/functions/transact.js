@@ -145,12 +145,25 @@ async function runAccountAction({ db, base, customerId, action, amount, settings
   let effects;
   const accountRef = db.ref(`${base}/accounts/${customerId}`);
 
+  // transaction() のコールバックは、最初の1回目をサーバーの値を読む前に
+  // 呼ぶことがある。その時 current は null で渡ってくる。以前はそれを見て
+  // 「お客様が見つかりません」と判断し、そこで打ち切っていたため、実在する
+  // お客様でもチャージ・お会計・削除が必ず失敗していた(2026-08-07に判明。
+  // 8/5にこの transaction() を入れて以降ずっと起きていた)。
+  //
+  // 実在するかどうかは、先に一度読んで確かめる。ここで存在が確認できていれば、
+  // コールバック1回目の null は「まだ読めていないだけ」なので、値を返さずに
+  // 見送れば Firebase が本当の値で呼び直してくれる。
+  const exists = (await accountRef.get()).exists();
+  if (!exists) {
+    const err = new Error("お客様が見つかりません");
+    err.statusCode = 403;
+    throw err;
+  }
+
   const txResult = await accountRef.transaction((current) => {
     effects = { entries: [], statPoints: {}, statCash: 0, rate: null, error: null, crossAccount: null };
-    if (!current) {
-      effects.error = "お客様が見つかりません";
-      return; // abort
-    }
+    if (!current) return; // まだ読めていない。Firebase が本当の値で呼び直す
     if (current.status && current.status !== "active") {
       effects.error =
         current.status === "blacklisted"
@@ -425,10 +438,18 @@ async function runAccountAction({ db, base, customerId, action, amount, settings
   // different account that could just as easily be mid-charge itself.
   if (effects.crossAccount) {
     const refRef = db.ref(`${base}/accounts/${effects.crossAccount.accountId}`);
-    const refResult = await refRef.transaction((current) => {
-      if (!current || (current.status && current.status !== "active")) return; // abort silently
-      return { ...current, pointBalance: (current.pointBalance || 0) + effects.crossAccount.pointDelta };
-    });
+    // transaction のコールバック1回目は値を読む前に null で呼ばれることが
+    // あるので、先に一度読んでおく(2026-08-07)。読まずに null で打ち切ると
+    // 紹介者へのポイントが永久に付かない。
+    const refSnap = await refRef.get();
+    const refOk = refSnap.exists() && (!refSnap.val().status || refSnap.val().status === "active");
+    const refResult = refOk
+      ? await refRef.transaction((current) => {
+          if (!current) return; // まだ読めていない
+          if (current.status && current.status !== "active") return;
+          return { ...current, pointBalance: (current.pointBalance || 0) + effects.crossAccount.pointDelta };
+        })
+      : { committed: false };
     if (refResult.committed) {
       await db
         .ref(`${base}/transactions/${effects.crossAccount.accountId}`)
@@ -524,8 +545,22 @@ async function handleDeleteCustomer({ db, base, storeId, customerId }) {
   const accRef = db.ref(`${base}/accounts/${customerId}`);
   let zeroed = null;
 
+  // 決済側と同じ理由で、先に存在を確かめてから transaction に入る
+  // (コールバック1回目は値を読む前に null で呼ばれることがある)。
+  const snap = await accRef.get();
+  if (!snap.exists()) {
+    const e = new Error("お客様が見つかりません");
+    e.statusCode = 403;
+    throw e;
+  }
+  if (snap.val().status === "deleted") {
+    const e = new Error("このお客様は既に削除済みです");
+    e.statusCode = 409;
+    throw e;
+  }
+
   const txResult = await accRef.transaction((current) => {
-    if (!current) return;
+    if (!current) return; // まだ読めていない。Firebase が本当の値で呼び直す
     if (current.status === "deleted") return; // 既に削除済み
     zeroed = {
       deposit: current.depositBalance || 0,
@@ -698,8 +733,14 @@ async function handleCancel({ db, base, customerId, transactionId }) {
   // the points or deposit were already spent since this entry was made,
   // the cancellation is refused rather than pushing the balance below zero.
   const accountRef = db.ref(`${base}/accounts/${customerId}`);
+  // 先に一度読む(理由は上と同じ)。
+  if (!(await accountRef.get()).exists()) {
+    const err = new Error("お客様が見つかりません");
+    err.statusCode = 403;
+    throw err;
+  }
   const result = await accountRef.transaction((current) => {
-    if (!current) return; // abort
+    if (!current) return; // まだ読めていない
     const newDeposit = (current.depositBalance || 0) + depositDelta;
     const newPoint = (current.pointBalance || 0) + pointDelta;
     if (newDeposit < 0 || newPoint < 0) return; // abort — already spent
@@ -726,12 +767,15 @@ async function handleCancel({ db, base, customerId, transactionId }) {
   let referrerBlocked = false;
   if (referrerId) {
     const refRef = db.ref(`${base}/accounts/${referrerId}`);
-    const refResult = await refRef.transaction((current) => {
-      if (!current) return;
-      const newPoint = (current.pointBalance || 0) + referrerPointDelta;
-      if (newPoint < 0) return; // abort
-      return { ...current, pointBalance: newPoint };
-    });
+    const refExists = (await refRef.get()).exists();
+    const refResult = refExists
+      ? await refRef.transaction((current) => {
+          if (!current) return; // まだ読めていない
+          const newPoint = (current.pointBalance || 0) + referrerPointDelta;
+          if (newPoint < 0) return; // abort
+          return { ...current, pointBalance: newPoint };
+        })
+      : { committed: false };
     referrerReversed = refResult.committed;
     referrerBlocked = !refResult.committed;
     if (!referrerReversed) {
