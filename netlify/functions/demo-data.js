@@ -145,37 +145,29 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify({ purged: body.storeIds, paths: removed }) };
   }
 
-  const { email, password, adminEmail, customers = 60, months = 24 } = body;
-  if (!email || !password) {
-    return { statusCode: 400, body: JSON.stringify({ error: "メールアドレスとパスワードは必須です" }) };
+  // 店舗は作らない(2026-08-07)。以前はここで店舗の作成とテストデータの
+  // 投入を両方やっていたため、呼ぶたびに新しい店舗ができて顧客60人・2年分が
+  // 必ず積まれ、「空の店舗で新規登録から試す」ができなかった。店舗を作るのは
+  // create-store.js だけにして、この処理は既にある店舗にデータを入れるだけに
+  // する。どの店舗に入れるかは storeId で指定する。
+  const { storeId, customers = 60, months = 24 } = body;
+  if (!storeId) {
+    return { statusCode: 400, body: JSON.stringify({ error: "店舗IDは必須です(先にcreate-storeで店舗を作ってください)" }) };
   }
 
-  // Store + login
-  let user;
-  try {
-    user = await admin.auth().getUserByEmail(email);
-    await admin.auth().updateUser(user.uid, { password });
-  } catch (e) {
-    user = await admin.auth().createUser({ email, password });
+  const store = (await db.ref(`storeList/${storeId}`).get()).val();
+  if (!store) {
+    return { statusCode: 404, body: JSON.stringify({ error: "店舗が見つかりません" }) };
   }
 
-  const numberResult = await db.ref("meta/lastStoreNumber").transaction((c) => (c || 10000) + 1);
-  const storeId = `p${numberResult.snapshot.val()}`;
   const now = Date.now();
   const startedAt = now - months * 30 * 24 * 60 * 60 * 1000;
 
+  // 既存の店舗設定に、テスト用の設定(ボーナス率など)を重ねる。連絡先や
+  // 権限には触らない。
   await db.ref().update({
     [`stores/${storeId}/storeSettings`]: { ...DEMO_SETTINGS, createdAt: startedAt },
-    [`stores/${storeId}/private`]: { contactEmail: email, adminEmail: adminEmail || null },
     [`stores/${storeId}/stats/startedAt`]: startedAt,
-    [`storeAdmins/${user.uid}`]: storeId,
-    [`storeList/${storeId}`]: {
-      companyName: DEMO_SETTINGS.companyName,
-      storeName: DEMO_SETTINGS.storeName,
-      contactEmail: email,
-      createdAt: startedAt,
-      status: "active",
-    },
   });
 
   // ---- Generate ----
@@ -212,6 +204,7 @@ exports.handler = async (event) => {
     const joinedAt = startedAt + rnd(months * 30 * 24 * 60 * 60 * 1000 * 0.8);
     let point = 0;
     let deposit = 0;
+    let spend = 0; // 会員ランクの判定に使う累計利用額
 
     // Visit frequency varies — some regulars, some who came twice and stopped.
     const visitsPerMonth = [0.3, 0.8, 1.5, 3][rnd(4)];
@@ -255,6 +248,7 @@ exports.handler = async (event) => {
         const earned = Math.round(usedDeposit * (tierRate(DEMO_SETTINGS.purchasePointTiers, usedDeposit) / 100));
         point = point - usedPoints + earned;
         deposit -= usedDeposit;
+        spend += gross;
         const payBatch = db.ref().push().key;
         writeTx(batch, storeId, customerId, payBatch, payBatch, {
           date: ymd(date), ts: at + 2, summary: `お会計 -¥${gross.toLocaleString()}`,
@@ -280,6 +274,7 @@ exports.handler = async (event) => {
     batch[`stores/${storeId}/accounts/${customerId}`] = {
       pointBalance: point,
       depositBalance: deposit,
+      cumulativeSpend: spend,
       bonusEligible: false,
       profile: { name, phone, email: null },
       requireVerification: false,
@@ -291,36 +286,19 @@ exports.handler = async (event) => {
     await flush(false);
   }
 
-  // Reference-date snapshots for terms that have already closed.
-  const snapshots = {};
-  for (const key of Object.keys(stats.terms)) {
-    const [y, half] = key.split("-");
-    const end = half === "H1" ? new Date(Number(y), 8, 30) : new Date(Number(y) + 1, 2, 31);
-    if (end.getTime() < now) {
-      snapshots[key] = {
-        at: end.getTime(),
-        date: ymd(end),
-        deposit: Math.round(stats.terms[key].cash * 0.25),
-        point: Math.round(stats.terms[key].point * 0.4),
-        cash: stats.terms[key].cash,
-        issuedPoints: stats.terms[key].point,
-        late: false,
-      };
-    }
-  }
+  // 基準日のスナップショットは廃止した(2026-08-07)。期別の数字は
+  // stats/terms に貯まっており、必要な時に期間を指定して出せる。
 
   batch[`stores/${storeId}/stats/cashTotal`] = stats.cashTotal;
   batch[`stores/${storeId}/stats/pointTotal`] = stats.pointTotal;
   batch[`stores/${storeId}/stats/points`] = stats.points;
   batch[`stores/${storeId}/stats/terms`] = stats.terms;
-  batch[`stores/${storeId}/stats/snapshots`] = snapshots;
   await flush(true);
 
   return {
     statusCode: 200,
     body: JSON.stringify({
       storeId,
-      uid: user.uid,
       customers,
       writes: written,
       cashTotal: stats.cashTotal,
