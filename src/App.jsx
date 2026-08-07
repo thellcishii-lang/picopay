@@ -439,8 +439,21 @@ export default function App() {
       // 「URL is invalid」として丸ごと捨てられる。src が捨てられると
       // ホーム画面のアイコンが設定されず既定のものに戻ってしまう。
       const origin = window.location.origin;
-      const startUrl =
-        origin + (window.location.pathname.startsWith("/store") ? "/store" : "/customer");
+      // お客様側は、開く先にお客様IDまで含める(2026-08-07)。iPhone では
+      // ホーム画面に追加したアプリと Safari とで保存領域が別なので、Safari
+      // で開いた時に端末へ覚えさせたお客様IDが引き継がれない。IDを付けて
+      // おかないと「どのお客様か分からない状態」で開いてしまう。
+      //
+      // myCustomerId の state はこの useEffect より後で定義されるため、
+      // ここでは同じ手順(URLの id → 端末に覚えたID)で直接取り出す。
+      let startUrl;
+      if (window.location.pathname.startsWith("/store")) {
+        startUrl = origin + "/store";
+      } else {
+        const fromLink = new URLSearchParams(window.location.search).get("id");
+        const savedId = fromLink || localStorage.getItem("picopay-customer-id");
+        startUrl = origin + "/customer" + (savedId ? `?id=${savedId}` : "");
+      }
       // 店舗のロゴは Storage の URL、ロゴを加工したものは data: URL で、
       // どちらも既に絶対。既定の favicon だけ origin を付ける。
       const iconSrc = iconUrl || `${origin}/favicon.svg`;
