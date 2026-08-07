@@ -154,17 +154,12 @@ const DEFAULT_ACCOUNT = {
 // rules) so the app can decide whether to show the phone verification gate
 // *before* the customer is authenticated (otherwise it's a chicken-and-egg
 // problem: you'd need to be verified to read the data that tells you
-// verification is needed). Also reads whether verification is required at
-// all for this account (store staff can turn it off per customer).
+// verification is needed).
+//
+// SMS認証は全員必須になったので(2026-08-07)、要否は読まない。
 export async function getAccountVerificationInfo(customerId) {
-  const [phoneSnap, requireSnap] = await Promise.all([
-    get(sref(`accounts/${customerId}/profile/phone`)),
-    get(sref(`accounts/${customerId}/requireVerification`)),
-  ]);
-  return {
-    phone: phoneSnap.val() || null,
-    requireVerification: requireSnap.val() !== false, // default true if unset
-  };
+  const phoneSnap = await get(sref(`accounts/${customerId}/profile/phone`));
+  return { phone: phoneSnap.val() || null };
 }
 
 // Subscribe to real-time changes for one customer's account.
@@ -234,7 +229,7 @@ export async function reissueCustomerAccess({ customerId, newPhone, idPhotoDataU
 // whatever profile fields were collected at registration. `phone` must be a
 // real number (E.164 format, e.g. +819012345678) since it's what the
 // customer will use to verify their identity later.
-export async function createAccount({ name, phone, email, requireVerification = true, referredBy = null }) {
+export async function createAccount({ name, phone, email, referredBy = null }) {
   if (!phone) throw new Error("電話番号は必須です(お客様の本人確認に使います)");
   const customerId =
     "cust-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
@@ -245,7 +240,7 @@ export async function createAccount({ name, phone, email, requireVerification = 
     bonusEligible: false,
     history: [],
     profile: { name, phone, email: email || null },
-    requireVerification,
+    requireVerification: true, // SMS認証は必須(2026-08-07)
     referredBy: referredBy || null,
     referralBonusGiven: false,
   };
