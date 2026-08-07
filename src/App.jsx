@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import ModeTopBar from "./TopBar.jsx";
 import { C, StoreView, CustomerView, PICO_PLACEHOLDER, resolveBrandImage } from "./components.jsx";
+import { buildTerms } from "./terms.js";
 import {
   subscribeToAccount,
   subscribeToAccountTransactions,
@@ -9,6 +10,7 @@ import {
   updateNotifyPrefs,
   createAccount,
   listCustomers,
+  subscribeToPushIndex,
   getCustomerEntry,
   getStoreSettings,
   getStatusMessages,
@@ -42,7 +44,6 @@ import {
   auth,
   subscribeToAuth,
   storeSignIn,
-  storeSignUp,
   storeSignOut,
   setupRecaptcha,
   sendPhoneCode,
@@ -89,7 +90,6 @@ function depositExpiryNoticeAt(settings = {}, lastVisitAt, now = Date.now()) {
 function StoreLogin() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isSignup, setIsSignup] = useState(false);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -97,14 +97,9 @@ function StoreLogin() {
     setError(null);
     setBusy(true);
     try {
-      if (isSignup) await storeSignUp(email, password);
-      else await storeSignIn(email, password);
+      await storeSignIn(email, password);
     } catch (e) {
-      setError(
-        isSignup
-          ? "登録できませんでした(既に使われているメールアドレスか、パスワードが短すぎる可能性があります)"
-          : "ログインできませんでした(メールアドレスかパスワードが違います)"
-      );
+      setError("ログインできませんでした(メールアドレスかパスワードが違います)");
     } finally {
       setBusy(false);
     }
@@ -114,7 +109,7 @@ function StoreLogin() {
     <div className="max-w-md mx-auto px-4 pt-10">
       <div className="rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
         <div className="text-sm font-bold" style={{ color: C.ink }}>
-          {isSignup ? "店舗アカウントを作成" : "店舗ログイン"}
+          店舗ログイン
         </div>
         <input
           value={email}
@@ -146,29 +141,101 @@ function StoreLogin() {
             opacity: busy ? 0.6 : 1,
           }}
         >
-          {busy ? "処理中…" : isSignup ? "登録する" : "ログイン"}
+          {busy ? "処理中…" : "ログイン"}
         </button>
-        <button
-          onClick={() => { setIsSignup((v) => !v); setError(null); }}
-          className="mt-2 w-full text-[11px] font-semibold"
-          style={{ color: C.teal }}
-        >
-          {isSignup ? "すでにアカウントがある方はこちら" : "初めての方はこちら(アカウント作成)"}
-        </button>
+        {/* 店舗が自分でアカウントを作る導線は削除した(2026-08-07)。店舗
+            アカウントは申込みと決済を経て AI Console が create-store.js を
+            呼んで作るもので、ここから自由に作れると仕組みと矛盾する。 */}
       </div>
     </div>
   );
 }
 
 // ---------------- CUSTOMER PHONE VERIFICATION ----------------
-function PhoneVerifyGate({ expectedPhone, onVerified, termsUrl }) {
+// 利用規約の本文。同意画面からも、お客様画面の下のボタンからも、同じものを
+// 出す。onBack があれば「戻る」を出す(お客様画面から開いた時)。
+function TermsScreen({ storeSettings, onBack }) {
+  const sections = buildTerms(storeSettings);
+  return (
+    <div className="min-h-screen" style={{ background: C.cream }}>
+      <div className="max-w-md mx-auto px-4 py-5">
+        <div className="text-base font-bold" style={{ color: C.ink }}>利用規約</div>
+        <div className="mt-3 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+          {sections.map((sec, i) => (
+            <div key={i} className={i === 0 ? "" : "mt-4"}>
+              {sec.title && (
+                <div className="text-[12px] font-bold" style={{ color: C.ink }}>{sec.title}</div>
+              )}
+              <div className="text-[11px] mt-1 whitespace-pre-wrap leading-relaxed" style={{ color: C.mute }}>
+                {sec.body}
+              </div>
+            </div>
+          ))}
+        </div>
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="mt-4 w-full rounded-full py-3 text-sm font-bold"
+            style={{ background: C.paper, border: `1px solid ${C.line}`, color: C.ink }}
+          >
+            戻る
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// お客様画面に入る一番手前の関門(2026-08-07)。
+//
+// 以前は SMS 認証の画面にだけ同意チェックを置いていたため、SMS 認証を
+// 使わない設定の店舗ではそもそも同意を取れていなかった。QRを読み込んだ
+// 直後のここに置けば、SMS 認証の有無にかかわらず必ず通る。
+// 同意した事実は保存しない(運営は関与しないため) — 端末側にだけ残す。
+function TermsGate({ storeSettings, onAgree }) {
+  const [agreed, setAgreed] = useState(false);
+  const [reading, setReading] = useState(false);
+
+  if (reading) return <TermsScreen storeSettings={storeSettings} onBack={() => setReading(false)} />;
+
+  return (
+    <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
+      <div className="max-w-md w-full px-4">
+        <div className="rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+          <div className="text-sm font-bold" style={{ color: C.ink }}>ご利用の前に</div>
+          <div className="text-[12px] mt-2" style={{ color: C.mute }}>
+            {storeSettings.storeName || "当店"}の利用規約をお読みのうえ、ご同意ください。
+          </div>
+          <button
+            onClick={() => setReading(true)}
+            className="mt-3 w-full rounded-xl py-2.5 text-[12px] font-semibold"
+            style={{ background: C.cream, color: C.teal }}
+          >
+            利用規約を読む
+          </button>
+          <label className="mt-3 flex items-center gap-2 text-[12px]" style={{ color: C.ink }}>
+            <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
+            <span>利用規約に同意します</span>
+          </label>
+          <button
+            onClick={onAgree}
+            disabled={!agreed}
+            className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
+            style={{ background: agreed ? C.teal : C.line, color: agreed ? "#fff" : C.mute }}
+          >
+            はじめる
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PhoneVerifyGate({ expectedPhone, onVerified }) {
   const [code, setCode] = useState("");
   const [confirmation, setConfirmation] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-  // 2026-08-06の決定:同意した事実は保存しない(運営は関与しない、という
-  // 整理のため)。このチェックはボタンの活性条件としてのみ使う。
-  const [agreed, setAgreed] = useState(false);
   const recaptchaContainerId = "picopay-recaptcha";
   const verifierRef = useRef(null);
 
@@ -216,30 +283,12 @@ function PhoneVerifyGate({ expectedPhone, onVerified, termsUrl }) {
         <div className="text-[12px] mt-1" style={{ color: C.mute }}>
           登録された電話番号({expectedPhone})宛にSMSで確認コードを送ります
         </div>
-        <label className="mt-3 flex items-start gap-2 text-[11px]" style={{ color: C.mute }}>
-          <input
-            type="checkbox"
-            checked={agreed}
-            onChange={(e) => setAgreed(e.target.checked)}
-            className="mt-0.5"
-          />
-          <span>
-            {termsUrl ? (
-              <a href={termsUrl} target="_blank" rel="noreferrer" style={{ color: C.teal, textDecoration: "underline" }}>
-                利用規約
-              </a>
-            ) : (
-              "利用規約"
-            )}
-            に同意します
-          </span>
-        </label>
         {!confirmation ? (
           <button
             onClick={send}
-            disabled={busy || !agreed}
+            disabled={busy}
             className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
-            style={{ background: agreed ? C.teal : C.line, color: agreed ? "#fff" : C.mute, opacity: busy ? 0.6 : 1 }}
+            style={{ background: C.teal, color: "#fff", opacity: busy ? 0.6 : 1 }}
           >
             {busy ? "送信中…" : "SMSを送信する"}
           </button>
@@ -254,9 +303,9 @@ function PhoneVerifyGate({ expectedPhone, onVerified, termsUrl }) {
             />
             <button
               onClick={verify}
-              disabled={busy || !code || !agreed}
+              disabled={busy || !code}
               className="mt-2 w-full rounded-full py-2.5 text-sm font-bold"
-              style={{ background: code && agreed ? C.teal : C.line, color: code && agreed ? "#fff" : C.mute, opacity: busy ? 0.6 : 1 }}
+              style={{ background: code ? C.teal : C.line, color: code ? "#fff" : C.mute, opacity: busy ? 0.6 : 1 }}
             >
               {busy ? "確認中…" : "確認する"}
             </button>
@@ -447,6 +496,14 @@ export default function App() {
   // What the person at the till is currently allowed to do. Starts at other1
   // (no password) every time the app opens, and drops back after 30 minutes
   // so a till left unattended doesn't stay unlocked.
+  // 配信の宛先。顧客一覧とは別に見張る(2026-08-07)。一覧はログイン時に
+  // 一度読むだけなので、お客様が後から通知を許可しても反映されなかった。
+  const [pushIndex, setPushIndex] = useState({});
+  useEffect(() => {
+    if (mode !== "store" || !storeId) return;
+    return subscribeToPushIndex(setPushIndex);
+  }, [mode, storeId]);
+
   const [roles, setRoles] = useState({});
   const [activeRole, setActiveRole] = useState("other1");
   useEffect(() => {
@@ -681,6 +738,13 @@ export default function App() {
   const msg = (key) => statusMessage(key, statusMessages.store, statusMessages.shared);
   const expiryNoticeAt = depositExpiryNoticeAt(storeSettings, account?.lastVisitAt);
 
+  // 規約への同意。端末側にだけ残す(同意した事実はサーバーに保存しない)。
+  const [termsAgreed, setTermsAgreed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("picopay-terms-agreed") === "1";
+  });
+  const [showTerms, setShowTerms] = useState(false);
+
   const needsPhoneGate = mode === "customer" && myPhone !== undefined && myPhone && !phoneVerified;
 
   return (
@@ -783,6 +847,7 @@ export default function App() {
               storeSettings={storeSettings}
               onSaveStoreSettings={handleSaveStoreSettings}
               onSendPush={handleSendPush}
+              pushIndex={pushIndex}
               onSignOut={handleStoreSignOut}
               stats={stats}
               onLoadTransactions={listTransactions}
@@ -840,11 +905,20 @@ export default function App() {
         <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
           <div className="text-sm" style={{ color: C.mute }}>読み込み中…</div>
         </div>
+      ) : !termsAgreed ? (
+        <TermsGate
+          storeSettings={storeSettings}
+          onAgree={() => {
+            localStorage.setItem("picopay-terms-agreed", "1");
+            setTermsAgreed(true);
+          }}
+        />
+      ) : showTerms ? (
+        <TermsScreen storeSettings={storeSettings} onBack={() => setShowTerms(false)} />
       ) : needsPhoneGate ? (
         <PhoneVerifyGate
           expectedPhone={myPhone}
           onVerified={() => setPhoneVerified(true)}
-          termsUrl={storeSettings.termsUrl}
         />
       ) : !accountLoaded ? (
         <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
@@ -889,6 +963,7 @@ export default function App() {
           <CustomerView
             pointBalance={account.pointBalance || 0}
             depositBalance={account.depositBalance || 0}
+            cumulativeSpend={account.cumulativeSpend || 0}
             bonusEligible={account.bonusEligible || false}
             onUseBonusSpin={handleUseBonusSpin}
             history={myTransactions}
@@ -898,6 +973,7 @@ export default function App() {
             branding={branding}
             notifyOptIn={account.notifyOptIn || null}
             onUpdateNotifyPrefs={(prefs) => handleUpdateNotifyPrefs(myCustomerId, prefs)}
+            onOpenTerms={() => setShowTerms(true)}
           />
         </>
       )}
