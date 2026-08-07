@@ -459,6 +459,14 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [activeRole]);
 
+  // 店舗ログアウト時は権限も最低権限に戻す(2026-08-07)。以前は認証を
+  // 切るだけで activeRole が画面に残っていたため、ログインし直すと
+  // 権限を持ったままの状態に戻ってしまっていた。
+  const handleStoreSignOut = useCallback(async () => {
+    setActiveRole("other1");
+    await storeSignOut();
+  }, []);
+
   const permissions =
     activeRole === "owner"
       ? { blacklist: true, deleteCustomer: true, settingsBasic: true, settingsFull: true, aggregate: true, owner: true }
@@ -677,7 +685,14 @@ export default function App() {
 
   return (
     <div className="min-h-screen" style={{ background: C.cream, fontFamily: "'Hiragino Sans', system-ui, sans-serif" }}>
-      <ModeTopBar mode={mode} storeSettings={storeSettings} branding={branding} />
+      {/* 店舗の設定が揃うまでヘッダーの中身を出さない(2026-08-07)。
+          ログイン前(店舗未特定)は既定の表示でよいので loaded 扱いにする。 */}
+      <ModeTopBar
+        mode={mode}
+        storeSettings={storeSettings}
+        branding={branding}
+        loaded={!storeId || settingsLoaded}
+      />
       {mode === "store" ? (
         authUser === undefined ? (
           <div className="min-h-screen flex items-center justify-center" style={{ background: C.cream }}>
@@ -700,7 +715,7 @@ export default function App() {
                 このアカウントには店舗が紐づいていません。お申し込み時のメールをご確認いただくか、サポートまでご連絡ください。
               </div>
               <button
-                onClick={storeSignOut}
+                onClick={handleStoreSignOut}
                 className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
                 style={{ background: C.cream, color: C.mute }}
               >
@@ -721,7 +736,7 @@ export default function App() {
                 {msg("terminatedStore")}
               </div>
               <button
-                onClick={storeSignOut}
+                onClick={handleStoreSignOut}
                 className="mt-3 w-full rounded-full py-2.5 text-sm font-bold"
                 style={{ background: C.cream, color: C.mute }}
               >
@@ -768,7 +783,7 @@ export default function App() {
               storeSettings={storeSettings}
               onSaveStoreSettings={handleSaveStoreSettings}
               onSendPush={handleSendPush}
-              onSignOut={storeSignOut}
+              onSignOut={handleStoreSignOut}
               stats={stats}
               onLoadTransactions={listTransactions}
               weather={weather}
