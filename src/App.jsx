@@ -29,7 +29,6 @@ import {
   spinGacha,
   fetchVerificationInfo,
   listTransactions,
-  recordMissingSnapshots,
   subscribeToWeather,
   lookupWeatherArea,
   setCurrentStore,
@@ -280,6 +279,12 @@ function PhoneVerifyGate({ expectedPhone, onVerified, termsUrl }) {
 function padLogoToSquareIcon(logoDataUrl, size = 512, background = "#FBF7F0") {
   return new Promise((resolve) => {
     const img = new Image();
+    // 画像が Storage の URL になった(2026-08-06)。別ドメインの画像をそのまま
+    // canvas に描くと toDataURL() が使えなくなる(汚染された canvas)ので、
+    // CORS 付きで取りに行く。Storage 側に CORS 設定が無い場合は読み込み
+    // 自体が失敗するため、その時はロゴの加工を諦めて既定アイコンに戻す。
+    img.crossOrigin = "anonymous";
+    img.onerror = () => resolve(null);
     img.onload = () => {
       const canvas = document.createElement("canvas");
       canvas.width = size;
@@ -294,7 +299,11 @@ function padLogoToSquareIcon(logoDataUrl, size = 512, background = "#FBF7F0") {
       const w = img.width * scale;
       const h = img.height * scale;
       ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
-      resolve(canvas.toDataURL("image/png"));
+      try {
+        resolve(canvas.toDataURL("image/png"));
+      } catch (e) {
+        resolve(null); // canvas が汚染されている場合
+      }
     };
     img.src = logoDataUrl;
   });
@@ -452,11 +461,10 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (mode !== "store" || !authUser || !storeId) return;
-    ensureStatsStarted()
-      // If the scheduled reference-date job ever missed a run, fill the gap
-      // here rather than leaving a hole in the record.
-      .then(() => recordMissingSnapshots().catch(() => {}))
-      .then(refreshStats);
+    // 基準日(3/31・9/30)の残高を記録する処理は廃止した(2026-08-07)。
+    // 必要になった時に店舗が期間を指定してデータを出せるので、事前に
+    // 記録しておく必要がない。期ごとの数字はstats/termsに貯まっている。
+    ensureStatsStarted().then(refreshStats);
   }, [mode, authUser, storeId, refreshStats]);
 
   const handleSaveStoreSettings = async (updates) => {
@@ -534,7 +542,9 @@ export default function App() {
     return result;
   };
 
-  const totalBalance = customers.reduce((s, c) => s + c.balance, 0);
+  // 概況に出すのは預かり金(現金)だけ。法的に問題になるのはこちらで、
+  // ポイントは関係ないため合算しない(2026-08-07)。
+  const totalBalance = customers.reduce((s, c) => s + (c.depositBalance || 0), 0);
 
   // ---- Customer-side: this device's own account ----
   const [myCustomerId, setMyCustomerId] = useState(() => {
@@ -766,7 +776,13 @@ export default function App() {
               onCancelTransaction={handleCancelTransaction}
               onExportAllData={exportAllStoreData}
               branding={branding}
-              onSaveBranding={saveBranding}
+              onSaveBranding={async (fields) => {
+                // サーバーが返すのは保存後のURL。画面側もそれで置き換える
+                // (選んだ時点の data URI のまま持ち続けると、次の読み込みで
+                // URL に変わった時に一瞬ちらつく)。
+                const saved = await saveBranding(fields);
+                setBrandingState((prev) => ({ ...prev, ...saved }));
+              }}
             />
           </>
         )
