@@ -193,13 +193,11 @@ export async function setCustomerStatus(customerId, status) {
   await update(sref(`accounts/${customerId}`), { status });
 }
 
-// Permanently and irreversibly delete a customer's account and all its data.
-export async function deleteCustomerPermanently(customerId) {
-  await update(ref(db), {
-    [spath(`accounts/${customerId}`)]: null,
-    [spath(`transactions/${customerId}`)]: null,
-    [`customerIndex/${customerId}`]: null,
-  });
+// 顧客の完全削除。データは消さず、削除の印を付けて残高だけ0にする
+// (2026-08-07)。実際の処理はサーバー側(transact.js)。ブラウザからは
+// 残高を書き換えられないルールなので、ここで直接消すことはできない。
+export function deleteCustomerPermanently(customerId) {
+  return callTransact({ action: "deleteCustomer", customerId });
 }
 
 // Re-issue access for a customer who lost their phone or changed their
@@ -253,17 +251,21 @@ export async function createAccount({ name, phone, email, requireVerification = 
 export async function listCustomers() {
   const snapshot = await get(sref("accounts"));
   const data = snapshot.val() || {};
-  return Object.entries(data).map(([id, acc]) => ({
-    id,
-    name: acc.profile?.name || "(名前未登録)",
-    phone: acc.profile?.phone || null,
-    email: acc.profile?.email || null,
-    balance: (acc.pointBalance || 0) + (acc.depositBalance || 0),
-    pointBalance: acc.pointBalance || 0,
-    depositBalance: acc.depositBalance || 0,
-    notifyOptIn: acc.notifyOptIn || null,
-    pushTokens: acc.pushTokens || [],
-  }));
+  return Object.entries(data)
+    // 完全削除した人はデータとしては残しているが、一覧には出さない
+    // (2026-08-07)。
+    .filter(([, acc]) => acc.status !== "deleted")
+    .map(([id, acc]) => ({
+      id,
+      name: acc.profile?.name || "(名前未登録)",
+      phone: acc.profile?.phone || null,
+      email: acc.profile?.email || null,
+      balance: (acc.pointBalance || 0) + (acc.depositBalance || 0),
+      pointBalance: acc.pointBalance || 0,
+      depositBalance: acc.depositBalance || 0,
+      notifyOptIn: acc.notifyOptIn || null,
+      pushTokens: acc.pushTokens || [],
+    }));
 }
 
 export { DEFAULT_ACCOUNT };
@@ -276,7 +278,9 @@ export { DEFAULT_ACCOUNT };
 // 発生する(2026-08-06)。変わったのは1人なので、その1人だけ差し替える。
 export async function getCustomerEntry(customerId) {
   const acc = (await get(sref(`accounts/${customerId}`))).val();
-  if (!acc) return null;
+  // null を返すと呼び出し側(App.jsx)が一覧から取り除く。完全削除した人は
+  // データとしては残っているが一覧には出さないので、ここでも null を返す。
+  if (!acc || acc.status === "deleted") return null;
   return {
     id: customerId,
     name: acc.profile?.name || "(名前未登録)",
@@ -318,8 +322,32 @@ export async function getBranding() {
   return snapshot.val() || {};
 }
 
+// ブランド画像(ロゴ・アイコン・ヒーロー)は Firebase Storage に置き、
+// データベースには URL だけを持つ(2026-08-06)。
+//
+// 以前は画像そのもの(data URI)をデータベースに入れていた。決済のたびに
+// 読まれる問題は storeSettings から branding に分けて解消したが、お客様が
+// アプリを開くたびに読む経路はそのまま残っていた。ヒーロー画像1枚で
+// 80〜150KB あり、これが画面表示のたびに毎回流れていた。
+//
+// アップロードはブラウザから直接ではなくサーバー(upload-branding.js)を
+// 通す。Storage のルールは Realtime Database の storeAdmins を参照できず、
+// ブラウザ側では「ログインしているか」しか判定できない。お客様も SMS 認証で
+// ログインするため、それだけだと誰でも他店の画像を差し替えられてしまう。
 export async function saveBranding(fields) {
-  await update(sref("branding"), fields);
+  const idToken = await auth.currentUser.getIdToken();
+  const results = {};
+  for (const [field, value] of Object.entries(fields)) {
+    const res = await fetch("/.netlify/functions/upload-branding", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken, storeId: currentStoreId, field, dataUrl: value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "画像の保存に失敗しました");
+    results[field] = data.url;
+  }
+  return results;
 }
 
 
@@ -504,37 +532,6 @@ export function closedTermKeysSince(startedAt, now = new Date()) {
   return keys;
 }
 
-export async function recordMissingSnapshots() {
-  const stats = await getStats();
-  if (!stats.startedAt) return;
-  const due = closedTermKeysSince(stats.startedAt);
-  const missing = due.filter((k) => !(stats.snapshots || {})[k]);
-  if (missing.length === 0) return;
-
-  const accountsSnap = await get(sref("accounts"));
-  const accounts = accountsSnap.val() || {};
-  let deposit = 0;
-  let point = 0;
-  for (const acc of Object.values(accounts)) {
-    deposit += acc.depositBalance || 0;
-    point += acc.pointBalance || 0;
-  }
-
-  const updates = {};
-  for (const key of missing) {
-    const term = (stats.terms || {})[key] || {};
-    updates[spath(`stats/snapshots/${key}`)] = {
-      at: Date.now(),
-      date: null,
-      deposit,
-      point,
-      cash: term.cash || 0,
-      issuedPoints: term.point || 0,
-      late: true,
-    };
-  }
-  await update(ref(db), updates);
-}
 
 // Today's rain probability, written by the hourly weather job. Read-only
 // here — the browser never calls 気象庁 directly, so every device shows the
@@ -756,18 +753,39 @@ export async function updateNotifyPrefs(customerId, prefs, pushToken) {
 // operator's automatic backup. That one exists whether or not anyone
 // remembers to run it; this one is a copy the store keeps for itself,
 // triggered on demand from the settings screen.
+// 店舗が自分の手元に控えを取るための書き出し。運営側ではバックアップを
+// 持たない方針にしたので(2026-08-07)、控えが要る店舗はこれを押して自分の
+// パソコンに保存する。
+//
+// 中身は顧客一覧と取引履歴の2つ。画面側でそれぞれCSVにする。
+// 完全削除した人も、取引履歴が残っている以上ここには含める(一覧には
+// 「削除済み」と分かる形で出す)。
 export async function exportAllStoreData() {
-  const [accountsSnap, txSnap, statsSnap, settingsSnap] = await Promise.all([
+  const [accountsSnap, txSnap] = await Promise.all([
     get(sref("accounts")),
     get(sref("transactions")),
-    get(sref("stats")),
-    get(sref("storeSettings")),
   ]);
-  return {
-    exportedAt: new Date().toISOString(),
-    storeSettings: settingsSnap.val() || {},
-    accounts: accountsSnap.val() || {},
-    transactions: txSnap.val() || {},
-    stats: statsSnap.val() || {},
-  };
+  const accounts = accountsSnap.val() || {};
+  const transactions = txSnap.val() || {};
+
+  const customers = Object.entries(accounts).map(([id, acc]) => ({
+    id,
+    name: acc.profile?.name || "(名前未登録)",
+    phone: acc.profile?.phone || "",
+    email: acc.profile?.email || "",
+    pointBalance: acc.pointBalance || 0,
+    depositBalance: acc.depositBalance || 0,
+    status: acc.status === "deleted" ? "削除済み" : "",
+  }));
+
+  const rows = [];
+  for (const [customerId, entries] of Object.entries(transactions)) {
+    const name = accounts[customerId]?.profile?.name || "(名前未登録)";
+    for (const e of Object.values(entries || {})) {
+      rows.push({ ...e, customerId, customerName: name });
+    }
+  }
+  rows.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+
+  return { customers, transactions: rows };
 }
