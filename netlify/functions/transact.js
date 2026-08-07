@@ -501,6 +501,82 @@ async function runAccountAction({ db, base, customerId, action, amount, settings
 // customer's account, and the referrer's account too if that charge
 // triggered a cross-account referral bonus. Same-day only: past that, too
 // much else may already depend on the balance the entry created.
+// 顧客の完全削除。
+//
+// データそのものは消さない(2026-08-07決定)。消してしまうと取引履歴ごと
+// 無くなり、その人がいた痕跡も、店舗の集計の裏付けも失われる。代わりに
+// アカウントに削除の印を付け、残高だけを0にする。
+//
+// 残高を0にするのは、二度と使われないお金とポイントが「現在の残高」に
+// 残り続けるのを防ぐため。ただし累計チャージ・累計ポイント発行は動かさない
+// — 実際に受け取った現金と、実際に発行したポイントの事実は消さない
+// (消すと会計が合わなくなる)。そのため、取消と同じ扱いではなく
+// 「お会計で使われた」のと同じ扱いで1件書く。stats には一切触れない。
+//
+// customerIndex からは外すので、その人はもうアプリを開けなくなる。
+async function handleDeleteCustomer({ db, base, storeId, customerId }) {
+  const accRef = db.ref(`${base}/accounts/${customerId}`);
+  let zeroed = null;
+
+  const txResult = await accRef.transaction((current) => {
+    if (!current) return;
+    if (current.status === "deleted") return; // 既に削除済み
+    zeroed = {
+      deposit: current.depositBalance || 0,
+      point: current.pointBalance || 0,
+    };
+    return {
+      ...current,
+      depositBalance: 0,
+      pointBalance: 0,
+      status: "deleted",
+      deletedAt: Date.now(),
+    };
+  });
+
+  if (!txResult.committed) {
+    const e = new Error("削除できませんでした(既に削除済みの可能性があります)");
+    e.statusCode = 409;
+    throw e;
+  }
+
+  const updates = {};
+  updates[`customerIndex/${customerId}`] = null;
+
+  // 残高が残っていた場合だけ、消込の履歴を1件書く。
+  if (zeroed && (zeroed.deposit > 0 || zeroed.point > 0)) {
+    const key = db.ref(`${base}/transactions/${customerId}`).push().key;
+    const entry = txEntry({
+      summary: "完全削除による残高消込",
+      kind: "payment",
+      gross: zeroed.deposit + zeroed.point,
+      depositUsed: zeroed.deposit,
+      pointUsed: zeroed.point,
+      total: -(zeroed.deposit + zeroed.point),
+      batchId: key,
+      items: [
+        ...(zeroed.point > 0 ? [{ label: "消込(ポイント)", amount: -zeroed.point }] : []),
+        ...(zeroed.deposit > 0 ? [{ label: "消込(預かり金)", amount: -zeroed.deposit }] : []),
+      ],
+    });
+    updates[`${base}/transactions/${customerId}/${key}`] = entry;
+    updates[`${base}/txIndex/${key}`] = {
+      customerId,
+      ts: entry.ts,
+      kind: "payment",
+      summary: entry.summary,
+      total: entry.total ?? null,
+      gross: entry.gross ?? null,
+      depositUsed: entry.depositUsed ?? null,
+      pointUsed: entry.pointUsed ?? null,
+      batchId: key,
+    };
+  }
+
+  await db.ref().update(updates);
+  return { deleted: true, customerId, zeroed };
+}
+
 async function handleCancel({ db, base, customerId, transactionId }) {
   if (!transactionId) {
     const err = new Error("取消対象のIDが必要です");
@@ -748,6 +824,8 @@ exports.handler = async (event) => {
       // 取消は既に発生したお金の動きを戻すだけなので、店舗が停止中でも
       // 引き続き許可する(停止中に打ち間違いを直せなくなる方が困る)。
       result = await handleCancel({ db, base, customerId, transactionId });
+    } else if (action === "deleteCustomer") {
+      result = await handleDeleteCustomer({ db, base, storeId, customerId });
     } else if (["charge", "payment", "gacha"].includes(action)) {
       const settings = (await db.ref(`${base}/storeSettings`).get()).val() || {};
       // 停止中の店舗は、画面側の表示だけに頼らずここでも決済・チャージ・
