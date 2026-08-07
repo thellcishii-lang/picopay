@@ -3034,14 +3034,10 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onCan
         "入金ガチャ",
         "購入ポイント",
         "友達紹介",
-        "基準日時点の預かり残高",
-        "基準日時点の未使用ポイント",
-        "記録",
       ],
       termKeys.map((k) => {
         const t = (stats.terms || {})[k] || {};
         const pt = t.points || {};
-        const snap = (stats.snapshots || {})[k];
         return [
           termLabelOf(k),
           t.cash || 0,
@@ -3051,9 +3047,6 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onCan
           pt.gacha || 0,
           pt.purchase || 0,
           pt.referral || 0,
-          snap ? snap.deposit || 0 : "",
-          snap ? snap.point || 0 : "",
-          snap ? (snap.late ? "後日記録" : "基準日") : "未記録",
         ];
       })
     );
@@ -3116,41 +3109,16 @@ function AggregateScreen({ stats = {}, customers = [], onLoadTransactions, onCan
                     <span className="text-[10px] font-bold" style={{ color: C.coral }}>今期</span>
                   )}
                 </div>
+                {/* 期別は預かり金(現金)の累計のみ。ポイントは法的に関係ない
+                    ので、ここには入れない(2026-08-07)。基準日時点の残高を
+                    記録する処理も廃止した — 必要な時に期間を指定して
+                    データを出せるので、貯めておく必要がない。 */}
                 <div className="mt-1 flex justify-between text-[11px]" style={{ color: C.mute }}>
-                  <span>チャージ ¥{(t.cash || 0).toLocaleString()}</span>
-                  <span>ポイント発行 P{(t.point || 0).toLocaleString()}</span>
+                  <span>チャージ(預かり金)</span>
+                  <span style={{ color: C.ink, fontWeight: 700 }}>
+                    ¥{(t.cash || 0).toLocaleString()}
+                  </span>
                 </div>
-                <PointBreakdown points={t.points || {}} compact />
-                {(() => {
-                  const snap = (stats.snapshots || {})[key];
-                  if (!snap) {
-                    return key === currentTerm ? null : (
-                      <div className="mt-1 text-[10px]" style={{ color: C.mute }}>
-                        基準日の残高は未記録です
-                      </div>
-                    );
-                  }
-                  const over = (snap.deposit || 0) > 10000000;
-                  return (
-                    <div className="mt-1 pt-1" style={{ borderTop: `1px dashed ${C.line}` }}>
-                      <div className="flex justify-between text-[10px]" style={{ color: C.mute }}>
-                        <span>基準日時点の預かり残高{snap.late ? "(後日記録)" : ""}</span>
-                        <span style={over ? { color: C.coral, fontWeight: 700 } : {}}>
-                          ¥{(snap.deposit || 0).toLocaleString()}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-[10px]" style={{ color: C.mute }}>
-                        <span>基準日時点の未使用ポイント</span>
-                        <span>P{(snap.point || 0).toLocaleString()}</span>
-                      </div>
-                      {over && (
-                        <div className="mt-1 text-[10px] font-semibold" style={{ color: C.coral }}>
-                          ⚠️ 1,000万円を超えています。財務局への届出が必要になる場合があります
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
               </div>
             );
           })}
@@ -3589,19 +3557,51 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
   const [showRoleEditor, setShowRoleEditor] = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  // A store's own copy of everything, separate from the operator's daily
-  // backup — this one exists only when the store asks for it.
+  // 店舗が自分のパソコンに控えを取るための書き出し(2026-08-07)。運営側では
+  // バックアップを持たない方針にしたので、控えが要る店舗はこれを使う。
+  // 顧客一覧と取引履歴の2ファイルに分けて出す — CSVは1ファイルに違う形の
+  // 表を混ぜられないため。
   const exportAllData = async () => {
     setExporting(true);
     try {
-      const data = await onExportAllData();
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `picopay-backup-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const { customers: list, transactions } = await onExportAllData();
+      const stamp = new Date().toISOString().slice(0, 10);
+
+      downloadCsv(
+        `picopay-customers-${stamp}.csv`,
+        ["お客様ID", "お名前", "電話番号", "メール", "ポイント残高", "預かり残高", "状態"],
+        list.map((c) => [c.id, c.name, c.phone, c.email, c.pointBalance, c.depositBalance, c.status])
+      );
+
+      downloadCsv(
+        `picopay-transactions-${stamp}.csv`,
+        [
+          "日時",
+          "お客様ID",
+          "お名前",
+          "種別",
+          "お会計総額",
+          "預かり金から充当",
+          "ポイントから充当",
+          "チャージ額",
+          "付与ポイント",
+          "摘要",
+          "取消",
+        ],
+        transactions.map((r) => [
+          formatDateTime(r.ts),
+          r.customerId,
+          r.customerName,
+          r.kind === "payment" ? "お会計" : r.kind === "charge" ? "チャージ" : r.kind === "cancellation" ? "取消" : "ポイント付与",
+          r.gross ?? "",
+          r.depositUsed ?? "",
+          r.pointUsed ?? "",
+          r.cash ?? "",
+          r.point ?? r.earned ?? "",
+          r.summary || "",
+          r.canceled ? "取消済み" : "",
+        ])
+      );
     } finally {
       setExporting(false);
     }
@@ -3698,31 +3698,24 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
         className="mt-4 rounded-2xl p-5"
         style={{ background: C.tealDeep, color: "#fff" }}
       >
+        {/* 預かり金(現金)のみ。ポイントは法的に関係ないので出さない。
+            以前はここに合計の82%/18%を掛けた内訳を出していたが、実データ
+            ではなく見た目だけの数字だったため削除した(2026-08-07)。 */}
         <div className="flex items-center justify-between">
-          <span className="text-xs opacity-80">今期の預かり残高(自家型・自店限定)</span>
+          <span className="text-xs opacity-80">預かり残高(自家型・自店限定)</span>
           <ShieldCheck size={16} className="opacity-80" />
         </div>
         <div className="mt-2 text-3xl font-bold tracking-tight">
           ¥{totalBalance.toLocaleString()}
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <div className="rounded-lg bg-white/10 px-3 py-2">
-            <div className="text-[10px] opacity-70">預かり金(供託対象)</div>
-            <div className="text-sm font-bold">¥{Math.round(totalBalance * 0.82).toLocaleString()}</div>
-          </div>
-          <div className="rounded-lg bg-white/10 px-3 py-2">
-            <div className="text-[10px] opacity-70">累計発行ポイント</div>
-            <div className="text-sm font-bold">¥{Math.round(totalBalance * 0.18).toLocaleString()}</div>
-          </div>
-        </div>
         <div className="mt-3 flex items-center justify-between text-[11px] opacity-80">
           <span>基準日:3/31・9/30</span>
-          <span>供託ライン ¥10,000,000 まで残り ¥{(10000000 - Math.round(totalBalance * 0.82)).toLocaleString()}</span>
+          <span>供託ライン ¥10,000,000 まで残り ¥{Math.max(0, 10000000 - totalBalance).toLocaleString()}</span>
         </div>
         <div className="mt-2 h-1.5 rounded-full bg-white/20 overflow-hidden">
           <div
             className="h-full rounded-full"
-            style={{ width: `${Math.min(100, (Math.round(totalBalance * 0.82) / 10000000) * 100)}%`, background: C.coral }}
+            style={{ width: `${Math.min(100, (totalBalance / 10000000) * 100)}%`, background: C.coral }}
           />
         </div>
       </div>
@@ -3967,7 +3960,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
             className="mt-2 w-full rounded-2xl py-3 text-sm font-bold flex items-center justify-center gap-1"
             style={{ background: C.paper, border: `1px solid ${C.line}`, color: C.teal, opacity: exporting ? 0.6 : 1 }}
           >
-            {exporting ? "書き出し中…" : "全データを書き出す"}
+            {exporting ? "書き出し中…" : "データを書き出す(CSV)"}
           </button>
           )}
           <SignOutButton onSignOut={onSignOut} />
