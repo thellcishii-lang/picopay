@@ -10,7 +10,6 @@ import {
   getAuth,
   onAuthStateChanged,
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   signOut,
   RecaptchaVerifier,
   signInWithPhoneNumber,
@@ -26,7 +25,22 @@ const firebaseConfig = {
   appId: "1:479126770039:web:dcdf6274a257e42a6e9172",
 };
 
-const app = initializeApp(firebaseConfig);
+// 店舗用とお客様用で、Firebase アプリの名前を分ける(2026-08-07)。
+//
+// ログイン状態は「アプリ名」ごとに別の場所へ保存される。1つの名前を共有して
+// いると、同じブラウザでお客様の SMS 認証を通した時点で店舗のログインが
+// 上書きされ、決済が「この操作を行う権限がありません」で 403 になる。
+// テストで1台を使い回すたびに壊れるうえ、店舗の人が自分のスマホをお客様
+// として使う場面でも同じことが起きる。
+//
+// 1つのタブは /store か /customer のどちらかなので、そのタブで使う側の
+// 名前で初期化すれば足りる。
+const SIDE =
+  typeof window !== "undefined" && window.location.pathname.startsWith("/store")
+    ? "store"
+    : "customer";
+
+const app = initializeApp(firebaseConfig, SIDE);
 export const db = getDatabase(app);
 export const auth = getAuth(app);
 
@@ -107,9 +121,6 @@ export function subscribeToAuth(callback) {
 }
 export async function storeSignIn(email, password) {
   await signInWithEmailAndPassword(auth, email, password);
-}
-export async function storeSignUp(email, password) {
-  await createUserWithEmailAndPassword(auth, email, password);
 }
 export async function storeSignOut() {
   await signOut(auth);
@@ -739,14 +750,31 @@ export async function fetchVerificationInfo(customerId) {
 // the browser may still write, so it's written field by field rather than by
 // saving the whole object back.
 export async function updateNotifyPrefs(customerId, prefs, pushToken) {
+  const existing = (await get(sref(`accounts/${customerId}/pushTokens`))).val() || [];
+  const tokens =
+    prefs.push && pushToken && !existing.includes(pushToken)
+      ? [...existing, pushToken]
+      : existing;
+
   const updates = { [spath(`accounts/${customerId}/notifyOptIn`)]: prefs };
-  if (prefs.push && pushToken) {
-    const existing = (await get(sref(`accounts/${customerId}/pushTokens`))).val() || [];
-    if (!existing.includes(pushToken)) {
-      updates[spath(`accounts/${customerId}/pushTokens`)] = [...existing, pushToken];
-    }
-  }
+  if (tokens !== existing) updates[spath(`accounts/${customerId}/pushTokens`)] = tokens;
+
+  // 配信の宛先だけを集めた小さな置き場にも書く(2026-08-07)。
+  //
+  // 店舗側は「ログインした時に読んだ顧客一覧」から宛先を集めていたため、
+  // お客様が後から通知を許可しても気づけず、宛先0件のまま送信処理まで
+  // 到達していなかった。ここに書いておけば、店舗側はこのノードだけを
+  // 見張って、変わった1件を受け取れる。名前も残高も入れないので軽い。
+  updates[spath(`pushIndex/${customerId}`)] = prefs.push
+    ? { push: true, tokens }
+    : null;
+
   await update(ref(db), updates);
+}
+
+// 配信の宛先の見張り。変更があった時だけ流れてくる。
+export function subscribeToPushIndex(callback) {
+  return onValue(sref("pushIndex"), (snap) => callback(snap.val() || {}));
 }
 
 // Full data export for the store's own records — separate from the
