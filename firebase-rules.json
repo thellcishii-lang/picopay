@@ -93,6 +93,12 @@
         "statusMessages": {
           ".read": true,
           ".write": false
+        },
+        "pushIndex": {
+          ".read": "auth != null && root.child('storeAdmins').child(auth.uid).val() === $storeId",
+          "$customerId": {
+            ".write": "auth != null && (root.child('storeAdmins').child(auth.uid).val() === $storeId || auth.token.phone_number == root.child('stores').child($storeId).child('accounts').child($customerId).child('profile/phone').val())"
+          }
         }
       }
     },
