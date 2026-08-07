@@ -3973,7 +3973,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
             className="mt-2 w-full rounded-2xl py-3 text-sm font-bold flex items-center justify-center gap-1"
             style={{ background: C.paper, border: `1px solid ${C.line}`, color: C.teal, opacity: exporting ? 0.6 : 1 }}
           >
-            {exporting ? "書き出し中…" : "データを書き出す(CSV)"}
+            {exporting ? "書き出し中…" : "バックアップ(CSV)"}
           </button>
           )}
           <SignOutButton onSignOut={onSignOut} />
