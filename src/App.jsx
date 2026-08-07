@@ -383,7 +383,18 @@ export default function App() {
       // 店舗用ログイン画面が開いてしまう不具合が実機で確認されたため
       // (2026-08-06)。myCustomerIdはこのuseEffectより後で定義されるため
       // (参照エラーになる)ここでは使わず、パスの種別だけで切り替える。
-      const startUrl = window.location.pathname.startsWith("/store") ? "/store" : "/customer";
+      //
+      // URLは必ず絶対で書く(2026-08-07)。この manifest はブラウザ内で
+      // 組み立てて blob: に置いて渡しているが、blob: から見ると「/」で
+      // 始まる書き方が何を指すのか解決できず、start_url も icons の src も
+      // 「URL is invalid」として丸ごと捨てられる。src が捨てられると
+      // ホーム画面のアイコンが設定されず既定のものに戻ってしまう。
+      const origin = window.location.origin;
+      const startUrl =
+        origin + (window.location.pathname.startsWith("/store") ? "/store" : "/customer");
+      // 店舗のロゴは Storage の URL、ロゴを加工したものは data: URL で、
+      // どちらも既に絶対。既定の favicon だけ origin を付ける。
+      const iconSrc = iconUrl || `${origin}/favicon.svg`;
 
       const manifest = {
         name: storeSettings.storeName || "PicoPay",
@@ -392,7 +403,7 @@ export default function App() {
         display: "standalone",
         background_color: "#FBF7F0",
         theme_color: "#0E6E5C",
-        icons: [{ src: favicon, sizes: "any", type: iconUrl ? "image/png" : "image/svg+xml" }],
+        icons: [{ src: iconSrc, sizes: "any", type: iconUrl ? "image/png" : "image/svg+xml" }],
       };
       const blob = new Blob([JSON.stringify(manifest)], { type: "application/json" });
       document.getElementById("app-manifest")?.setAttribute("href", URL.createObjectURL(blob));
