@@ -3947,6 +3947,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
 
       {tab === "notify" && (
         <BroadcastPanel
+          pushIndex={pushIndex}
           customers={customers}
           storeSettings={storeSettings}
           onSave={onSaveStoreSettings}
