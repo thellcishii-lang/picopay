@@ -54,7 +54,13 @@ import {
 //   /customer → customer screen (share this URL, or the setup link, with customers)
 //   anything else defaults to /store, so the bare site URL still works.
 function modeFromPath() {
-  return window.location.pathname.startsWith("/customer") ? "customer" : "store";
+  const path = window.location.pathname;
+  if (path.startsWith("/customer")) return "customer";
+  if (path.startsWith("/store")) return "store";
+  // トップが開かれた時。iOSはblob:のmanifestを読めず開く先が効かないため、
+  // ホーム画面のアイコンからだとここに来る。端末にお客様IDが残っていれば
+  // お客様として扱う。
+  return localStorage.getItem("picopay-customer-id") ? "customer" : "store";
 }
 
 // ---------------- STORE LOGIN ----------------
