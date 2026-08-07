@@ -78,6 +78,30 @@ const DEMO_SETTINGS = {
   dailyChargeCap: 100000,
 };
 
+// 取引を1件書く。本体(transactions)と、集計画面が読む店舗単位の索引
+// (txIndex)の両方に書き込む — transact.js が本番でやっているのと同じ形。
+// 索引に載せる項目も transact.js と揃えてある。
+// batchId は「どれとどれが同じ会計か」の目印。チャージと入金ボーナス、
+// お会計と購入ポイントはそれぞれ同じ batchId を共有する。
+function writeTx(batch, storeId, customerId, key, batchId, entry) {
+  batch[`stores/${storeId}/transactions/${customerId}/${key}`] = { ...entry, batchId };
+  batch[`stores/${storeId}/txIndex/${key}`] = {
+    customerId,
+    ts: entry.ts ?? null,
+    kind: entry.kind ?? null,
+    summary: entry.summary ?? null,
+    total: entry.total ?? null,
+    gross: entry.gross ?? null,
+    depositUsed: entry.depositUsed ?? null,
+    pointUsed: entry.pointUsed ?? null,
+    earned: entry.earned ?? null,
+    point: entry.point ?? null,
+    cash: entry.cash ?? null,
+    category: entry.category ?? null,
+    batchId,
+  };
+}
+
 function tierRate(tiers, amount) {
   const t = tiers.find((x) => x.upTo === null || amount <= x.upTo) || tiers[tiers.length - 1];
   return t ? t.rate : 0;
@@ -204,18 +228,21 @@ exports.handler = async (event) => {
         const bonus = Math.round(amount * (tierRate(DEMO_SETTINGS.depositBonusTiers, amount) / 100));
         deposit += amount;
         point += bonus;
-        batch[`stores/${storeId}/transactions/${customerId}/${db.ref().push().key}`] = {
+        // チャージとその入金ボーナスは同じ会計なので batchId を共有する。
+        // 取消はこの batchId で引くため、別々にすると片方しか戻らない。
+        const chargeBatch = db.ref().push().key;
+        writeTx(batch, storeId, customerId, chargeBatch, chargeBatch, {
           date: ymd(date), ts: at, summary: `チャージ ¥${amount.toLocaleString()}`,
           kind: "charge", cash: amount, total: amount,
           items: [{ label: "チャージ", amount }],
-        };
+        });
         addStat(date, amount, null, 0);
         if (bonus > 0) {
-          batch[`stores/${storeId}/transactions/${customerId}/${db.ref().push().key}`] = {
+          writeTx(batch, storeId, customerId, db.ref().push().key, chargeBatch, {
             date: ymd(date), ts: at + 1, summary: "入金ボーナス", kind: "point",
             category: "depositBonus", point: bonus, total: bonus,
             items: [{ label: "入金ボーナス", amount: bonus }],
-          };
+          });
           addStat(date, 0, "depositBonus", bonus);
         }
       }
@@ -228,7 +255,8 @@ exports.handler = async (event) => {
         const earned = Math.round(usedDeposit * (tierRate(DEMO_SETTINGS.purchasePointTiers, usedDeposit) / 100));
         point = point - usedPoints + earned;
         deposit -= usedDeposit;
-        batch[`stores/${storeId}/transactions/${customerId}/${db.ref().push().key}`] = {
+        const payBatch = db.ref().push().key;
+        writeTx(batch, storeId, customerId, payBatch, payBatch, {
           date: ymd(date), ts: at + 2, summary: `お会計 -¥${gross.toLocaleString()}`,
           kind: "payment", gross, depositUsed: usedDeposit, pointUsed: usedPoints,
           earned, total: -gross,
@@ -236,13 +264,13 @@ exports.handler = async (event) => {
             ...(usedPoints > 0 ? [{ label: "お会計(ポイント消費分)", amount: -usedPoints }] : []),
             ...(usedDeposit > 0 ? [{ label: "お会計(預かり金消費分)", amount: -usedDeposit }] : []),
           ],
-        };
+        });
         if (earned > 0) {
-          batch[`stores/${storeId}/transactions/${customerId}/${db.ref().push().key}`] = {
+          writeTx(batch, storeId, customerId, db.ref().push().key, payBatch, {
             date: ymd(date), ts: at + 3, summary: "購入ポイント付与", kind: "purchasePoint",
             category: "purchase", point: earned, total: earned,
             items: [{ label: "購入ポイント", amount: earned }],
-          };
+          });
           addStat(date, 0, "purchase", earned);
         }
       }
