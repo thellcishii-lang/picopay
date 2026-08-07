@@ -3377,7 +3377,17 @@ function AdminLogin({ roles, activeRole, onVerify, onExit, onBack, onSignOut }) 
         </button>
       )}
 
-      <SignOutButton onSignOut={onSignOut} />
+      {/* ここは店舗そのものではなく権限だけを外す(2026-08-07)。以前は
+          店舗ログアウトを呼んでいたため、押すと店舗のログイン画面まで
+          戻ってしまっていた。 */}
+      <SignOutButton
+        onSignOut={() => {
+          onExit();
+          onBack();
+        }}
+        label="権限ログアウト"
+        note="権限のない通常の状態に戻ります。店舗のログインはそのままです"
+      />
     </div>
   );
 }
@@ -3509,15 +3519,18 @@ function RoleEditor({ roles, onSave, onDelete, onBack }) {
 // ---------------- SIGN OUT ----------------
 // Lives at the very bottom of the settings tab rather than floating on every
 // screen — signing out is rare, and having it always visible invited misclicks.
-function SignOutButton({ onSignOut }) {
+// label / note は呼び出し側から渡す。設定画面のものは店舗そのものの
+// ログアウト、admin画面のものは権限だけを外す「権限ログアウト」で、
+// 押した後どうなるかが違うため(2026-08-07)。
+function SignOutButton({ onSignOut, label = "ログアウト", note }) {
   const [confirming, setConfirming] = useState(false);
 
   if (confirming) {
     return (
       <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
-        <div className="text-sm font-bold" style={{ color: C.ink }}>ログアウトしますか?</div>
+        <div className="text-sm font-bold" style={{ color: C.ink }}>{label}しますか?</div>
         <div className="text-[11px] mt-1" style={{ color: C.mute }}>
-          次に使う時は、メールアドレスとパスワードでのログインが必要になります
+          {note || "次に使う時は、メールアドレスとパスワードでのログインが必要になります"}
         </div>
         <div className="mt-3 flex gap-2">
           <button
@@ -3532,7 +3545,7 @@ function SignOutButton({ onSignOut }) {
             className="flex-1 rounded-full py-2.5 text-sm font-bold"
             style={{ background: C.coral, color: "#fff" }}
           >
-            ログアウト
+            {label}
           </button>
         </div>
       </div>
@@ -3545,7 +3558,7 @@ function SignOutButton({ onSignOut }) {
       className="mt-4 w-full rounded-2xl py-3 text-sm font-bold"
       style={{ background: C.paper, border: `1px solid ${C.line}`, color: C.mute }}
     >
-      ログアウト
+      {label}
     </button>
   );
 }
