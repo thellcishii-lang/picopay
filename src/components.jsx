@@ -2009,7 +2009,7 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
 // entirely here.
 const MAX_BROADCAST_GROUPS = 10;
 
-function ChannelBroadcastSection({ channelKey, channelLabel, customers, storeSettings, onSave, onSend }) {
+function ChannelBroadcastSection({ channelKey, channelLabel, customers, storeSettings, onSave, onSend, pushIndex = {} }) {
   const [body, setBody] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [showGroupSend, setShowGroupSend] = useState(false);
