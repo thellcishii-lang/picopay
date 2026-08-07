@@ -551,8 +551,9 @@ export default function App() {
   const handleSetRankingEnabled = (value) => handleSaveStoreSettings({ rankingEnabled: value });
   const handleSetWeatherEnabled = (value) => handleSaveStoreSettings({ weatherEnabled: value });
 
-  const handleRegisterCustomer = async ({ name, phone, email, requireVerification, referredBy }) => {
-    const customerId = await createAccount({ name, phone, email, requireVerification, referredBy });
+  const handleRegisterCustomer = async ({ name, phone, email, referredBy }) => {
+    // SMS認証は必須(2026-08-07)。店舗が選べる形はやめた。
+    const customerId = await createAccount({ name, phone, email, referredBy });
     await refreshOneCustomer(customerId);
     return customerId;
   };
@@ -678,33 +679,28 @@ export default function App() {
   // decide whether the gate is needed *before* the customer is
   // authenticated (see fetchVerificationInfo in firebase.js).
   const [myPhone, setMyPhone] = useState(undefined); // undefined = not checked yet, null = no phone on file
-  const [requireVerification, setRequireVerification] = useState(true);
   // Has this device's phone been verified against this account's phone yet?
   const [phoneVerified, setPhoneVerified] = useState(false);
 
   useEffect(() => {
     if (mode !== "customer" || !myCustomerId || !storeId) return;
     let cancelled = false;
-    fetchVerificationInfo(myCustomerId).then(({ phone, requireVerification }) => {
-      if (!cancelled) {
-        setMyPhone(phone);
-        setRequireVerification(requireVerification);
-      }
+    fetchVerificationInfo(myCustomerId).then(({ phone }) => {
+      if (!cancelled) setMyPhone(phone);
     });
     return () => {
       cancelled = true;
     };
   }, [mode, myCustomerId, storeId]);
 
-  // If this browser session's Firebase Auth phone number already matches the
-  // account's registered phone, or verification isn't required at all, skip
-  // the verification screen and load the real account data.
+  // この端末で既にそのお客様の電話番号として認証済みなら、認証画面は飛ばす。
+  // SMS認証は必須なので「要否」の分岐は無い(2026-08-07)。
   useEffect(() => {
     if (myPhone === undefined) return; // still checking
-    if (!myPhone || !requireVerification || authUser?.phoneNumber === myPhone) {
+    if (!myPhone || authUser?.phoneNumber === myPhone) {
       setPhoneVerified(true);
     }
-  }, [myPhone, requireVerification, authUser]);
+  }, [myPhone, authUser]);
 
   useEffect(() => {
     if (mode !== "customer" || !myCustomerId || !phoneVerified || !storeId) return;
@@ -964,6 +960,7 @@ export default function App() {
             pointBalance={account.pointBalance || 0}
             depositBalance={account.depositBalance || 0}
             cumulativeSpend={account.cumulativeSpend || 0}
+            customerName={account.profile?.name || null}
             bonusEligible={account.bonusEligible || false}
             onUseBonusSpin={handleUseBonusSpin}
             history={myTransactions}
