@@ -615,16 +615,13 @@ export default function App() {
   const handleUpdateNotifyPrefs = async (customerId, prefs) => {
     let pushToken = null;
     if (prefs.push) {
-      pushToken = await requestPushToken();
+      const result = await requestPushToken();
+      pushToken = result.token;
       if (!pushToken) {
-        // Permission denied, or the browser doesn't support push — keep the
-        // checkbox state the customer chose, but there's no token to save,
-        // so nothing will actually be deliverable until they allow it.
+        // iOS PWA でない場合など、トークン取得失敗の理由をコンソールに出力
+        console.warn("[Push] トークン取得失敗:", result.error);
       }
     }
-    // Only these two fields — the rules no longer allow writing a whole
-    // account from the browser, and rewriting it wholesale is how a balance
-    // could get clobbered by a stale copy anyway.
     await updateNotifyPrefs(customerId, prefs, pushToken);
   };
 
