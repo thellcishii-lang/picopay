@@ -1,8 +1,3 @@
-// Netlify serverless function — this is the only place the Firebase
-// service account (a real secret) is used. It never reaches the browser.
-// The service account JSON is stored as a Netlify environment variable
-// (FIREBASE_SERVICE_ACCOUNT_JSON, set in Netlify's site settings), not in
-// this file or in git.
 const admin = require("firebase-admin");
 
 if (!admin.apps.length) {
@@ -38,11 +33,8 @@ exports.handler = async (event) => {
       },
       webpush: {
         notification: {
-          // 小さなアイコン（ブラウザ通知バー用）
           icon: icon || undefined,
-          // 大きな画像（通知カード内に表示される）
           image: icon || undefined,
-          // クリック時の遷移先（同じオリジン内のパス）
           click_action: "/",
         },
         fcm_options: {
@@ -54,7 +46,7 @@ exports.handler = async (event) => {
 
     const result = await admin.messaging().sendEachForMulticast(message);
 
-    // デバッグ：失敗したトークンと理由をログに残す（Netlify Functions のログで確認可能）
+    // デバッグ：失敗したトークンと理由をログに残す
     const failures = result.responses
       .map((r, i) => ({ success: r.success, error: r.error, token: tokens[i] }))
       .filter((r) => !r.success);
