@@ -275,7 +275,9 @@ export async function getBranding() {
 }
 
 export async function saveBranding(fields) {
-  const idToken = await auth.currentUser.getIdToken();
+  const user = auth.currentUser;
+　　if (!user) throw new Error("ログインが必要です");
+　　const idToken = await user.getIdToken();
   const results = {};
   for (const [field, value] of Object.entries(fields)) {
     const res = await fetch("/.netlify/functions/upload-branding", {
