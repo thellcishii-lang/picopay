@@ -32,20 +32,18 @@ messaging.onBackgroundMessage((payload) => {
   self.registration.showNotification(title, notificationOptions);
 });
 
-// 通知クリック時の処理：アプリを開く（既に開いている場合はフォーカス）
+// 通知クリック時の処理：アプリを開く
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const urlToOpen = event.notification.data?.link || "/";
   
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then((windowClients) => {
-      // 既に開いているタブがあればフォーカス
       for (const client of windowClients) {
         if (client.url.includes(self.location.origin) && "focus" in client) {
           return client.focus();
         }
       }
-      // なければ新規で開く
       if (clients.openWindow) {
         return clients.openWindow(urlToOpen);
       }
