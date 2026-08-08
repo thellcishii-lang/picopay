@@ -1,3 +1,22 @@
+import { PICO_PLACEHOLDER, resolveBrandImage } from "./components.jsx";
+
+function modeFromPath() {
+  return typeof window !== "undefined" && window.location.pathname.startsWith("/store")
+    ? "store"
+    : "customer";
+}
+
+function depositExpiryNoticeAt(settings, lastVisitAt) {
+  if (!settings?.depositExpiryEnabled || !settings?.depositExpiryNoticeEnabled || !lastVisitAt) return null;
+  const expiresAt = lastVisitAt + (settings.depositExpiryYears || 1) * 365 * 24 * 60 * 60 * 1000;
+  const noticeAt = expiresAt - 30 * 24 * 60 * 60 * 1000;
+  return Date.now() >= noticeAt && Date.now() < expiresAt ? expiresAt : null;
+}
+
+function statusMessage(key, storeMsgs = {}, sharedMsgs = {}) {
+  return storeMsgs[key] || sharedMsgs[key] || "";
+}
+
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import ModeTopBar from "./TopBar.jsx";
 import { C, StoreView, CustomerView, PICO_PLACEHOLDER, resolveBrandImage } from "./components.jsx";
