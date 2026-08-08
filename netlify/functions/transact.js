@@ -361,7 +361,7 @@ async function runAccountAction({ db, base, customerId, action, amount, settings
       // ゴールドになっていた。ここで積んだ実データを見る形にする。
       // 取引履歴から毎回数え直すと読み込みが重くなるので、会計のたびに
       // 足しておく。
-      next.cumulativeSpend = (current.cumulativeSpend || 0) + gross;
+      next.cumulativeSpend = (current.cumulativeSpend || 0) + value;
     } else if (action === "gacha") {
       if (!current.bonusEligible) {
         effects.error = "ガチャを回せる状態ではありません";
