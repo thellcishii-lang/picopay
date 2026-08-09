@@ -626,11 +626,10 @@ export default function App() {
   };
 
   const handleSendPush = async (tokens, body) => {
-    if (!tokens || tokens.length === 0) return;
-    const title = storeSettings.storeName || "PicoPay";
-    await sendPushNotification({ tokens, title, body });
-  };
-
+  if (!tokens || tokens.length === 0) return;
+  const title = storeSettings.storeName || "PicoPay";
+  await sendPushNotification({ tokens, title, body, storeId: currentStoreId });
+};
   // Money never moves in the browser any more — these just tell the server
   // what happened and let it work out the amounts from the store's settings.
   const handleCharge = async (amount, customerId) => {
