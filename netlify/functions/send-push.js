@@ -4,6 +4,7 @@ if (!admin.apps.length) {
   const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
+    databaseURL: "https://picopay-5a53e-default-rtdb.asia-southeast1.firebasedatabase.app",
   });
 }
 
@@ -19,14 +20,12 @@ exports.handler = async (event) => {
     return { statusCode: 400, body: "Invalid JSON" };
   }
 
-  const { tokens, title, body, icon } = payload;
+  const { tokens, title, body, icon, storeId } = payload;
   if (!Array.isArray(tokens) || tokens.length === 0 || !body) {
     return { statusCode: 400, body: "tokens (array) and body are required" };
   }
 
-  // ---- 重複排除 & 文字列のみ抽出 ----
-  // 同じ端末で複数回トークンを取得した場合、古いトークンも有効なまま残る。
-  // FCMは各トークンに個別に送信するので、重複があると同じ端末に何回も届く。
+  // 重複排除 & 文字列のみ抽出
   const validTokens = [...new Set(tokens)].filter(
     (t) => typeof t === "string" && t.length > 0
   );
@@ -38,9 +37,7 @@ exports.handler = async (event) => {
     };
   }
 
-  // デバッグ：どんなトークンが来たか
-  console.log("[send-push] Raw tokens:", tokens.length, "Unique valid:", validTokens.length);
-  console.log("[send-push] Token samples:", validTokens.slice(0, 3).map(t => t.slice(0, 20) + "..."));
+  console.log("[send-push] Raw:", tokens.length, "Unique:", validTokens.length);
 
   try {
     const message = {
@@ -54,28 +51,73 @@ exports.handler = async (event) => {
           image: icon || undefined,
           click_action: "/",
         },
-        fcm_options: {
-          link: "/",
-        },
+        fcm_options: { link: "/" },
       },
       tokens: validTokens,
     };
 
     const result = await admin.messaging().sendEachForMulticast(message);
 
-    // 安全に失敗を収集（tokenが文字列でない場合もあるため）
-    const failures = result.responses
-      .map((r, i) => ({ success: r.success, error: r.error, token: validTokens[i] }))
-      .filter((r) => !r.success);
+    // ---- 無効トークンを検出してDBから削除 ----
+    const invalidTokens = [];
+    const failures = [];
+
+    result.responses.forEach((r, i) => {
+      if (!r.success) {
+        const errCode = r.error?.code || r.error?.message || "";
+        const token = validTokens[i];
+        failures.push({ token: token.slice(0, 20) + "...", error: errCode });
+
+        // 無効化されたトークンはDBから削除対象
+        if (
+          errCode.includes("registration-token-not-registered") ||
+          errCode.includes("invalid-registration-token") ||
+          errCode.includes("messaging/invalid-registration-token")
+        ) {
+          invalidTokens.push(token);
+        }
+      }
+    });
+
+    // DBから無効トークンを削除（storeIdが渡されていれば）
+    if (storeId && invalidTokens.length > 0) {
+      const db = admin.database();
+      const base = `stores/${storeId}`;
+      
+      // pushIndexとaccountsの両方から削除
+      const pushIndexSnap = await db.ref(`${base}/pushIndex`).get();
+      const pushIndex = pushIndexSnap.val() || {};
+      
+      const updates = {};
+      for (const [customerId, data] of Object.entries(pushIndex)) {
+        if (!data?.tokens) continue;
+        const customerTokens = typeof data.tokens === "object" && !Array.isArray(data.tokens)
+          ? Object.keys(data.tokens)
+          : Array.isArray(data.tokens) ? data.tokens : [];
+        
+        const hasInvalid = invalidTokens.some((t) => customerTokens.includes(t));
+        if (hasInvalid) {
+          const remaining = customerTokens.filter((t) => !invalidTokens.includes(t));
+          if (remaining.length === 0) {
+            updates[`${base}/pushIndex/${customerId}`] = null;
+            updates[`${base}/accounts/${customerId}/pushTokens`] = null;
+          } else {
+            const newTokens = {};
+            remaining.forEach((t) => (newTokens[t] = true));
+            updates[`${base}/pushIndex/${customerId}/tokens`] = newTokens;
+            updates[`${base}/accounts/${customerId}/pushTokens`] = newTokens;
+          }
+        }
+      }
+      
+      if (Object.keys(updates).length > 0) {
+        await db.ref().update(updates);
+        console.log("[send-push] Cleaned up invalid tokens:", invalidTokens.length);
+      }
+    }
 
     if (failures.length > 0) {
-      console.error(
-        `[send-push] ${failures.length}/${validTokens.length} failures:`,
-        failures.map((f) => ({
-          token: typeof f.token === "string" ? f.token.slice(0, 20) + "..." : String(f.token).slice(0, 30),
-          error: f.error?.message,
-        }))
-      );
+      console.error(`[send-push] ${failures.length}/${validTokens.length} failures:`, failures);
     }
 
     return {
@@ -83,12 +125,10 @@ exports.handler = async (event) => {
       body: JSON.stringify({
         successCount: result.successCount,
         failureCount: result.failureCount,
-        dedupedFrom: tokens.length,      // 元の件数
-        actualSent: validTokens.length,  // 重複排除後の件数
-        failures: failures.map((f) => ({
-          tokenPreview: typeof f.token === "string" ? f.token.slice(0, 20) + "..." : String(f.token).slice(0, 30),
-          error: f.error?.message,
-        })),
+        dedupedFrom: tokens.length,
+        actualSent: validTokens.length,
+        invalidCleaned: invalidTokens.length,
+        failures,
       }),
     };
   } catch (e) {
