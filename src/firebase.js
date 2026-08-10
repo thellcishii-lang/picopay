@@ -66,21 +66,11 @@ export function onForegroundMessage(handler) {
 
 // ---- Push notification preferences（オブジェクト形式で保存）----
 export async function updateNotifyPrefs(customerId, prefs, pushToken) {
-  const existingSnap = await get(sref(`accounts/${customerId}/pushTokens`));
-  const existing = existingSnap.val() || {};
-  
-  // Realtime Database では配列は推奨されない。トークンをキーにしたオブジェクトで管理
-  let tokens = { ...existing };
-  // 既存データが配列だった場合の移行対応
-  if (Array.isArray(existing)) {
-    tokens = {};
-    for (const t of existing) if (t) tokens[t] = true;
-  }
-  
+  // 新しいトークンを取得したら、古いトークンはすべて置き換える
+  // （同じ端末で複数トークンが発行されると同じ通知が何度も届くため）
+  let tokens = {};
   if (prefs.push && pushToken) {
     tokens[pushToken] = true;
-  } else if (!prefs.push && pushToken) {
-    delete tokens[pushToken];
   }
   
   const hasTokens = Object.keys(tokens).length > 0;
