@@ -47,32 +47,21 @@ const VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY || '';
 // パス構築ヘルパー（バックエンドと完全整合）
 // ============================================
 
-/** localStorage の tenantId = 現在選択中の店舗ID */
 function currentStoreId() {
   return localStorage.getItem('tenantId') || 'default';
 }
 
-/**
- * 店舗固有データのパスを構築
- * spath('accounts') → 'stores/デフォルト店舗ID/accounts'
- * spath('accounts/xxx') → 'stores/デフォルト店舗ID/accounts/xxx'
- */
 function spath(subPath) {
   const storeId = currentStoreId();
   if (!subPath) return `stores/${storeId}`;
   return `stores/${storeId}/${subPath}`;
 }
 
-/**
- * 店舗IDを明示的に指定するパス（getBranding などで使用）
- * storePath('店舗A', 'branding') → 'stores/店舗A/branding'
- */
 function storePath(storeId, subPath) {
   if (!subPath) return `stores/${storeId}`;
   return `stores/${storeId}/${subPath}`;
 }
 
-// ---- 定数 ----
 export const DEFAULT_ACCOUNT = {
   balance: 0,
   status: 'active',
@@ -80,7 +69,7 @@ export const DEFAULT_ACCOUNT = {
 };
 
 // ============================================
-// 店舗認証（App.jsx から import される）
+// 店舗認証
 // ============================================
 
 export async function storeSignIn(email, password) {
@@ -107,7 +96,7 @@ export function setupRecaptcha(containerId) {
 }
 
 // ============================================
-// アカウント管理（バックエンド: stores/{storeId}/accounts）
+// アカウント管理
 // ============================================
 
 export async function createAccount(accountData) {
@@ -183,16 +172,14 @@ export async function reissueCustomerAccess(customerId) {
 }
 
 // ============================================
-// ブランディング・設定（バックエンド整合）
+// ブランディング・設定
 // ============================================
 
-/** ブランディング取得: stores/{storeId}/branding */
 export async function getBranding(storeId) {
   const snapshot = await get(ref(db, storePath(storeId, 'branding')));
   return snapshot.val();
 }
 
-/** ブランディング保存: stores/{storeId}/branding */
 export async function saveBranding(storeId, brandingData) {
   if (!storeId) throw new Error('storeId is required');
   if (!brandingData) throw new Error('brandingData is required');
@@ -202,13 +189,11 @@ export async function saveBranding(storeId, brandingData) {
   });
 }
 
-/** 店舗設定取得: stores/{storeId}/storeSettings */
 export async function getStoreSettings(storeId) {
   const snapshot = await get(ref(db, storePath(storeId, 'storeSettings')));
   return snapshot.val();
 }
 
-/** 店舗設定保存: stores/{storeId}/storeSettings */
 export async function saveStoreSettings(storeId, settings) {
   await set(ref(db, storePath(storeId, 'storeSettings')), {
     ...settings,
@@ -216,7 +201,6 @@ export async function saveStoreSettings(storeId, settings) {
   });
 }
 
-/** ステータスメッセージ取得: stores/{storeId}/statusMessages */
 export async function getStatusMessages() {
   const snapshot = await get(ref(db, spath('statusMessages')));
   return snapshot.val() || {};
@@ -257,7 +241,6 @@ export async function requestPushToken() {
   }
 }
 
-/** ⚠️ 本番ではバックエンド経由に変更必須 */
 export async function sendPushNotification(token, payload) {
   console.warn('[FCM] sendPushNotification はバックエンド実装が必要です', token, payload);
 }
@@ -276,9 +259,9 @@ export async function updateNotifyPrefs(customerId, prefs, pushToken) {
   const hasTokens = Object.keys(tokens).length > 0;
 
   const updates = {};
-  updates[spath(`accounts/${customerId}/notifyOptIn`))] = prefs;
-  updates[spath(`accounts/${customerId}/pushTokens`))] = hasTokens ? tokens : null;
-  updates[spath(`pushIndex/${customerId}`))] = prefs.push && hasTokens ? { push: true, tokens } : null;
+  updates[spath(`accounts/${customerId}/notifyOptIn`)] = prefs;
+  updates[spath(`accounts/${customerId}/pushTokens`)] = hasTokens ? tokens : null;
+  updates[spath(`pushIndex/${customerId}`)] = prefs.push && hasTokens ? { push: true, tokens } : null;
   await update(ref(db), updates);
 }
 
@@ -296,7 +279,7 @@ export function normalizePushTokens(val) {
 }
 
 // ============================================
-// 取引（⚠️ フロントエンド直接書き込みは rules で禁止。Netlify Function 経由を推奨）
+// 取引
 // ============================================
 
 export async function chargeAccount(customerId, amount, metadata = {}) {
@@ -347,7 +330,7 @@ export async function listTransactions(customerId) {
 }
 
 // ============================================
-// 統計（バックエンド整合）
+// 統計
 // ============================================
 
 export async function getStats(storeId) {
@@ -368,7 +351,7 @@ export async function ensureStatsStarted(storeId) {
 }
 
 // ============================================
-// 店舗・ロール管理（バックエンド整合）
+// 店舗・ロール管理
 // ============================================
 
 export function setCurrentStore(storeId) {
@@ -413,32 +396,22 @@ export async function verifyRolePassword(storeId, roleId, password) {
 // 天気（バックエンド整合: stores/{storeId}/weather）
 // ============================================
 
-/** 
- * 店舗の天気情報をリアルタイム購読
- * @param {string} storeId - 店舗ID
- * @param {function} callback - コールバック
- */
 export function subscribeToWeather(storeId, callback) {
   return onValue(ref(db, storePath(storeId, 'weather')), (snap) => {
     callback(snap.val());
   });
 }
 
-/**
- * 郵便番号 → 気象庁エリアコード変換
- * TODO: 実際のマスターデータまたはAPIで実装
- */
 export async function lookupWeatherArea(postalCode) {
-  // スタブ: 郵便番号の上位3桁で簡易判定
   const prefix = postalCode?.toString().slice(0, 3);
   const mapping = {
-    '100': { code: '130010', name: '東京' },   // 東京
-    '150': { code: '130010', name: '東京' },   // 渋谷
-    '530': { code: '270000', name: '大阪' },   // 大阪
-    '600': { code: '260010', name: '京都' },   // 京都
-    '064': { code: '016010', name: '札幌' },   // 札幌
-    '812': { code: '400010', name: '福岡' },   // 福岡
-    '900': { code: '471010', name: '那覇' },   // 那覇
+    '100': { code: '130010', name: '東京' },
+    '150': { code: '130010', name: '東京' },
+    '530': { code: '270000', name: '大阪' },
+    '600': { code: '260010', name: '京都' },
+    '064': { code: '016010', name: '札幌' },
+    '812': { code: '400010', name: '福岡' },
+    '900': { code: '471010', name: '那覇' },
   };
   return mapping[prefix] || { code: prefix + '0000', name: '不明' };
 }
