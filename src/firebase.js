@@ -29,13 +29,13 @@ import {
 
 // ---- Firebase 初期化 ----
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: "AIzaSyD8k35AAE9s1MeXj5pB7WVrGKg3Wlkv-xA",
+  authDomain: "picopay-5a53e.firebaseapp.com",
+  databaseURL: "https://picopay-5a53e-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "picopay-5a53e",
+  storageBucket: "picopay-5a53e.firebasestorage.app",
+  messagingSenderId: "479126770039",
+  appId: "1:479126770039:web:dcdf6274a257e42a6e9172",
 };
 
 export const app = initializeApp(firebaseConfig);
