@@ -103,11 +103,11 @@
       }
     },
     "customerIndex": {
-      "$customerId": {
-        ".read": true,
-        ".write": "auth != null"
-      }
-    },
+  "$customerId": {
+    ".read": "auth != null",  // ← 認証済みユーザーのみ
+    ".write": "auth != null"
+  }
+},
     "storeAdmins": {
       ".read": "auth != null",
       ".write": false
