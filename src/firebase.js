@@ -6,6 +6,7 @@ import { initializeApp } from 'firebase/app';
 import {
   getAuth,
   signInWithEmailAndPassword,
+  signInWithPhoneNumber,  // ← 電話認証用に追加
   signOut,
   onAuthStateChanged,
   RecaptchaVerifier,
@@ -16,7 +17,6 @@ import {
   get,
   set,
   update,
-  onValue,
 } from 'firebase/database';
 import {
   getMessaging,
@@ -42,7 +42,6 @@ export const db = getDatabase(app);
 const VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY || '';
 
 // ---- マルチテナント用パス接頭辞 ----
-// localStorage に tenantId があれば接頭辞として付与
 function spath(path) {
   const tenantId = localStorage.getItem('tenantId') || 'default';
   if (!path) return tenantId;
@@ -56,6 +55,11 @@ function spath(path) {
 /** 店舗サインイン（メール/パスワード） */
 export async function storeSignIn(email, password) {
   return signInWithEmailAndPassword(auth, email, password);
+}
+
+/** 電話番号認証：SMS コード送信 */
+export async function sendPhoneCode(phoneNumber, appVerifier) {
+  return signInWithPhoneNumber(auth, phoneNumber, appVerifier);
 }
 
 /** 店舗サインアウト */
@@ -84,7 +88,6 @@ export function setupRecaptcha(containerId) {
 
 /** 新規顧客アカウント作成 */
 export async function createAccount(accountData) {
-  // 🔧 修正: Math.random() → crypto.randomUUID()
   const customerId = crypto.randomUUID();
   const path = spath(`accounts/${customerId}`);
 
@@ -121,7 +124,6 @@ export async function listCustomers() {
 
 /** 店舗ブランディング情報を保存 */
 export async function saveBranding(storeId, brandingData) {
-  // 🔧 修正: null/undefined チェック追加
   if (!storeId) throw new Error('storeId is required');
   if (!brandingData) throw new Error('brandingData is required');
 
@@ -158,7 +160,6 @@ export async function requestPushToken() {
     return { token: null, error: 'no-sw' };
   }
 
-  // iOS は PWA としてインストールされていないと通知不可
   if (isIos() && !isPwa()) {
     console.warn(
       '[FCM] iOS Safari はホーム画面に追加後、PWA として開く必要があります'
@@ -199,7 +200,7 @@ export async function requestPushToken() {
   }
 }
 
-/** フォアグラウンド時のメッセージ受信（iOS PWA で必須） */
+/** フォアグラウンド時のメッセージ受信 */
 export function onForegroundMessage(handler) {
   const messaging = getMessaging(app);
   return onMessage(messaging, (payload) => {
@@ -223,7 +224,6 @@ export async function updateNotifyPrefs(customerId, prefs, pushToken) {
     ? tokens
     : null;
 
-  // pushIndex も同様にオブジェクト形式で
   updates[spath(`pushIndex/${customerId}`)] =
     prefs.push && hasTokens ? { push: true, tokens } : null;
 
