@@ -1,5 +1,5 @@
 // ============================================
-// PicoPay - src/firebase.js（完全書き換え版）
+// PicoPay - src/firebase.js（バックエンド整合版）
 // ============================================
 
 import { initializeApp } from 'firebase/app';
@@ -43,11 +43,33 @@ export const auth = getAuth(app);
 export const db = getDatabase(app);
 const VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY || '';
 
-// ---- マルチテナント用パス接頭辞 ----
-function spath(path) {
-  const tenantId = localStorage.getItem('tenantId') || 'default';
-  if (!path) return tenantId;
-  return `${tenantId}/${path}`;
+// ============================================
+// パス構築ヘルパー（バックエンドと完全整合）
+// ============================================
+
+/** localStorage の tenantId = 現在選択中の店舗ID */
+function currentStoreId() {
+  return localStorage.getItem('tenantId') || 'default';
+}
+
+/**
+ * 店舗固有データのパスを構築
+ * spath('accounts') → 'stores/デフォルト店舗ID/accounts'
+ * spath('accounts/xxx') → 'stores/デフォルト店舗ID/accounts/xxx'
+ */
+function spath(subPath) {
+  const storeId = currentStoreId();
+  if (!subPath) return `stores/${storeId}`;
+  return `stores/${storeId}/${subPath}`;
+}
+
+/**
+ * 店舗IDを明示的に指定するパス（getBranding などで使用）
+ * storePath('店舗A', 'branding') → 'stores/店舗A/branding'
+ */
+function storePath(storeId, subPath) {
+  if (!subPath) return `stores/${storeId}`;
+  return `stores/${storeId}/${subPath}`;
 }
 
 // ---- 定数 ----
@@ -85,13 +107,12 @@ export function setupRecaptcha(containerId) {
 }
 
 // ============================================
-// アカウント管理
+// アカウント管理（バックエンド: stores/{storeId}/accounts）
 // ============================================
 
 export async function createAccount(accountData) {
   const customerId = crypto.randomUUID();
-  const path = spath(`accounts/${customerId}`);
-  await set(ref(db, path), {
+  await set(ref(db, spath(`accounts/${customerId}`)), {
     ...accountData,
     id: customerId,
     createdAt: Date.now(),
@@ -162,35 +183,40 @@ export async function reissueCustomerAccess(customerId) {
 }
 
 // ============================================
-// ブランディング・設定
+// ブランディング・設定（バックエンド整合）
 // ============================================
 
+/** ブランディング取得: stores/{storeId}/branding */
 export async function getBranding(storeId) {
-  const snapshot = await get(ref(db, spath(`branding/${storeId}`)));
+  const snapshot = await get(ref(db, storePath(storeId, 'branding')));
   return snapshot.val();
 }
 
+/** ブランディング保存: stores/{storeId}/branding */
 export async function saveBranding(storeId, brandingData) {
   if (!storeId) throw new Error('storeId is required');
   if (!brandingData) throw new Error('brandingData is required');
-  await set(ref(db, spath(`branding/${storeId}`)), {
+  await set(ref(db, storePath(storeId, 'branding')), {
     ...brandingData,
     updatedAt: Date.now(),
   });
 }
 
+/** 店舗設定取得: stores/{storeId}/storeSettings */
 export async function getStoreSettings(storeId) {
-  const snapshot = await get(ref(db, spath(`stores/${storeId}/settings`)));
+  const snapshot = await get(ref(db, storePath(storeId, 'storeSettings')));
   return snapshot.val();
 }
 
+/** 店舗設定保存: stores/{storeId}/storeSettings */
 export async function saveStoreSettings(storeId, settings) {
-  await set(ref(db, spath(`stores/${storeId}/settings`)), {
+  await set(ref(db, storePath(storeId, 'storeSettings')), {
     ...settings,
     updatedAt: Date.now(),
   });
 }
 
+/** ステータスメッセージ取得: stores/{storeId}/statusMessages */
 export async function getStatusMessages() {
   const snapshot = await get(ref(db, spath('statusMessages')));
   return snapshot.val() || {};
@@ -231,9 +257,8 @@ export async function requestPushToken() {
   }
 }
 
+/** ⚠️ 本番ではバックエンド経由に変更必須 */
 export async function sendPushNotification(token, payload) {
-  // TODO: バックエンド経由で FCM API v1 を呼ぶべき
-  // フロントエンドから直接送るのはセキュリティ的に非推奨
   console.warn('[FCM] sendPushNotification はバックエンド実装が必要です', token, payload);
 }
 
@@ -251,9 +276,9 @@ export async function updateNotifyPrefs(customerId, prefs, pushToken) {
   const hasTokens = Object.keys(tokens).length > 0;
 
   const updates = {};
-  updates[spath(`accounts/${customerId}/notifyOptIn`)] = prefs;
-  updates[spath(`accounts/${customerId}/pushTokens`)] = hasTokens ? tokens : null;
-  updates[spath(`pushIndex/${customerId}`)] = prefs.push && hasTokens ? { push: true, tokens } : null;
+  updates[spath(`accounts/${customerId}/notifyOptIn`))] = prefs;
+  updates[spath(`accounts/${customerId}/pushTokens`))] = hasTokens ? tokens : null;
+  updates[spath(`pushIndex/${customerId}`))] = prefs.push && hasTokens ? { push: true, tokens } : null;
   await update(ref(db), updates);
 }
 
@@ -271,20 +296,17 @@ export function normalizePushTokens(val) {
 }
 
 // ============================================
-// 取引（入金・支払い・取消）
+// 取引（⚠️ フロントエンド直接書き込みは rules で禁止。Netlify Function 経由を推奨）
 // ============================================
 
 export async function chargeAccount(customerId, amount, metadata = {}) {
   const txId = crypto.randomUUID();
-  const now = Date.now();
-  const path = spath(`transactions/${customerId}/${txId}`);
-  await set(ref(db, path), {
+  await set(ref(db, spath(`transactions/${customerId}/${txId}`)), {
     type: 'charge',
-    value: amount,  // ← gross ではなく value
+    value: amount,
     ...metadata,
-    createdAt: now,
+    createdAt: Date.now(),
   });
-  // 残高更新
   const account = await getAccountOnce(customerId);
   const newBalance = (account.balance || 0) + amount;
   await update(ref(db, spath(`accounts/${customerId}`)), { balance: newBalance });
@@ -293,13 +315,11 @@ export async function chargeAccount(customerId, amount, metadata = {}) {
 
 export async function payFromAccount(customerId, amount, metadata = {}) {
   const txId = crypto.randomUUID();
-  const now = Date.now();
-  const path = spath(`transactions/${customerId}/${txId}`);
-  await set(ref(db, path), {
+  await set(ref(db, spath(`transactions/${customerId}/${txId}`)), {
     type: 'payment',
-    value: amount,  // ← gross ではなく value
+    value: amount,
     ...metadata,
-    createdAt: now,
+    createdAt: Date.now(),
   });
   const account = await getAccountOnce(customerId);
   const newBalance = (account.balance || 0) - amount;
@@ -316,7 +336,6 @@ export async function cancelTransaction(customerId, txId) {
     cancelled: true,
     cancelledAt: Date.now(),
   });
-  // 残高巻き戻し
   const account = await getAccountOnce(customerId);
   const delta = tx.type === 'charge' ? -tx.value : tx.value;
   const newBalance = (account.balance || 0) + delta;
@@ -328,18 +347,18 @@ export async function listTransactions(customerId) {
 }
 
 // ============================================
-// 統計
+// 統計（バックエンド整合）
 // ============================================
 
 export async function getStats(storeId) {
-  const snapshot = await get(ref(db, spath(`stats/${storeId}`)));
+  const snapshot = await get(ref(db, storePath(storeId, 'stats')));
   return snapshot.val() || { totalSales: 0, totalCharges: 0, count: 0 };
 }
 
 export async function ensureStatsStarted(storeId) {
-  const snap = await get(ref(db, spath(`stats/${storeId}`)));
+  const snap = await get(ref(db, storePath(storeId, 'stats')));
   if (!snap.exists()) {
-    await set(ref(db, spath(`stats/${storeId}`)), {
+    await set(ref(db, storePath(storeId, 'stats')), {
       totalSales: 0,
       totalCharges: 0,
       count: 0,
@@ -349,7 +368,7 @@ export async function ensureStatsStarted(storeId) {
 }
 
 // ============================================
-// 店舗・ロール管理
+// 店舗・ロール管理（バックエンド整合）
 // ============================================
 
 export function setCurrentStore(storeId) {
@@ -367,43 +386,61 @@ export async function resolveStoreForCustomer(customerId) {
 }
 
 export function subscribeToRoles(storeId, callback) {
-  return onValue(ref(db, spath(`stores/${storeId}/roles`)), (snap) => {
+  return onValue(ref(db, storePath(storeId, 'roles')), (snap) => {
     callback(snap.val() || {});
   });
 }
 
 export async function saveRole(storeId, roleId, roleData) {
-  await set(ref(db, spath(`stores/${storeId}/roles/${roleId}`)), {
+  await set(ref(db, storePath(storeId, `roles/${roleId}`)), {
     ...roleData,
     updatedAt: Date.now(),
   });
 }
 
 export async function deleteRole(storeId, roleId) {
-  await remove(ref(db, spath(`stores/${storeId}/roles/${roleId}`)));
+  await remove(ref(db, storePath(storeId, `roles/${roleId}`)));
 }
 
 export async function verifyRolePassword(storeId, roleId, password) {
-  const snapshot = await get(ref(db, spath(`stores/${storeId}/roles/${roleId}`)));
+  const snapshot = await get(ref(db, storePath(storeId, `roles/${roleId}`)));
   const role = snapshot.val();
   if (!role) return false;
   return role.password === password;
 }
 
 // ============================================
-// 天気
+// 天気（バックエンド整合: stores/{storeId}/weather）
 // ============================================
 
-export function subscribeToWeather(areaCode, callback) {
-  return onValue(ref(db, `weather/${areaCode}`), (snap) => {
+/** 
+ * 店舗の天気情報をリアルタイム購読
+ * @param {string} storeId - 店舗ID
+ * @param {function} callback - コールバック
+ */
+export function subscribeToWeather(storeId, callback) {
+  return onValue(ref(db, storePath(storeId, 'weather')), (snap) => {
     callback(snap.val());
   });
 }
 
-export async function lookupWeatherArea(query) {
-  // TODO: 実際の天気API連携が必要
-  // スタブ実装
-  return { code: query, name: query };
+/**
+ * 郵便番号 → 気象庁エリアコード変換
+ * TODO: 実際のマスターデータまたはAPIで実装
+ */
+export async function lookupWeatherArea(postalCode) {
+  // スタブ: 郵便番号の上位3桁で簡易判定
+  const prefix = postalCode?.toString().slice(0, 3);
+  const mapping = {
+    '100': { code: '130010', name: '東京' },   // 東京
+    '150': { code: '130010', name: '東京' },   // 渋谷
+    '530': { code: '270000', name: '大阪' },   // 大阪
+    '600': { code: '260010', name: '京都' },   // 京都
+    '064': { code: '016010', name: '札幌' },   // 札幌
+    '812': { code: '400010', name: '福岡' },   // 福岡
+    '900': { code: '471010', name: '那覇' },   // 那覇
+  };
+  return mapping[prefix] || { code: prefix + '0000', name: '不明' };
 }
 
 // ============================================
@@ -414,7 +451,7 @@ export async function exportAllStoreData(storeId) {
   const [accountsSnap, txSnap, brandingSnap] = await Promise.all([
     get(ref(db, spath('accounts'))),
     get(ref(db, spath('transactions'))),
-    get(ref(db, spath(`branding/${storeId}`))),
+    get(ref(db, storePath(storeId, 'branding'))),
   ]);
   return {
     accounts: accountsSnap.val() || {},
