@@ -1,14 +1,5 @@
 // Hourly job for the 天気連動ゲリラボーナス.
-//
-// Two jobs in one pass:
-//   1. Fetch today's rain probability and store it, so the dashboard can show
-//      "本日は雨の確率が80%です" without every device calling 気象庁 itself.
-//   2. If the store is on 自動配信 and this is its configured hour, and the
-//      probability for that hour clears the threshold, activate the bonus and
-//      push the announcement.
-//
-// It runs every hour rather than only at the configured time because the
-// configured time is a store setting — the schedule can't follow it.
+// マルチテナント対応版 — 全店舗を巡回し、各店舗の設定に従って処理する。
 const admin = require("firebase-admin");
 
 const DATABASE_URL =
@@ -32,12 +23,39 @@ function ymd(d) {
   ).padStart(2, "0")}`;
 }
 
-// 気象庁 publishes today's rain probability in three blocks: 6-12, 12-18,
-// 18-24. Which one applies depends on the hour being asked about.
 function slotIndexForHour(hour) {
   if (hour < 12) return 0;
   if (hour < 18) return 1;
   return 2;
+}
+
+// 気象庁API結果をエリアコード単位でキャッシュ（同じエリアの店舗が複数あっても1回だけ呼ぶ）
+const weatherCache = new Map();
+
+async function fetchWeather(areaCode, office) {
+  const cacheKey = `${areaCode}:${ymd(jstNow())}`;
+  if (weatherCache.has(cacheKey)) {
+    return weatherCache.get(cacheKey);
+  }
+
+  const res = await fetch(`https://www.jma.go.jp/bosai/forecast/data/forecast/${office}.json`);
+  const fc = await res.json();
+
+  const series = (((fc[0] || {}).timeSeries || [])[1]) || {};
+  const area =
+    (series.areas || []).find((a) => a.area.code === areaCode) ||
+    (series.areas || [])[0];
+  const pops = (area && area.pops) || [];
+  const defines = series.timeDefines || [];
+
+  const today = ymd(jstNow());
+  const todayPops = defines
+    .map((t, i) => ({ time: new Date(t), pop: Number(pops[i]) }))
+    .filter((x) => ymd(new Date(x.time.getTime() + 9 * 60 * 60 * 1000)) === today);
+
+  const result = { area, todayPops, areaName: area ? area.area.name : null };
+  weatherCache.set(cacheKey, result);
+  return result;
 }
 
 exports.handler = async () => {
@@ -46,83 +64,94 @@ exports.handler = async () => {
   const today = ymd(now);
   const db = admin.database();
 
-  const settings = (await db.ref("storeSettings").get()).val() || {};
-  if (settings.weatherEnabled === false || !settings.weatherAreaCode) {
-    return { statusCode: 200, body: JSON.stringify({ skipped: "未設定" }) };
+  // 全店舗を取得
+  const storesSnap = (await db.ref("stores").get()).val() || {};
+  const results = [];
+
+  for (const [storeId, storeData] of Object.entries(storesSnap)) {
+    const settings = storeData.storeSettings || {};
+    
+    // 天気連動が無効またはエリアコード未設定ならスキップ
+    if (settings.weatherEnabled === false || !settings.weatherAreaCode) {
+      continue;
+    }
+
+    const office = settings.weatherOffice || `${settings.weatherAreaCode.slice(0, 2)}0000`;
+    const { area, todayPops, areaName } = await fetchWeather(settings.weatherAreaCode, office);
+
+    const current = todayPops.find((x) => {
+      const h = new Date(x.time.getTime() + 9 * 60 * 60 * 1000).getUTCHours();
+      return slotIndexForHour(hour) === slotIndexForHour(h);
+    });
+    const maxPop = todayPops.reduce((m, x) => Math.max(m, x.pop || 0), 0);
+
+    const base = `stores/${storeId}`;
+
+    // 店舗ごとに天気データを保存
+    await db.ref(`${base}/weather`).set({
+      date: today,
+      updatedAt: Date.now(),
+      areaName,
+      currentPop: current ? current.pop : null,
+      maxPop,
+    });
+
+    // 自動配信判定
+    if (settings.weatherAutoMode !== "auto") {
+      results.push({ storeId, mode: "manual" });
+      continue;
+    }
+    if (Number(settings.weatherSendHour ?? 10) !== hour) {
+      results.push({ storeId, waiting: true });
+      continue;
+    }
+    if (settings.weatherActiveDate === today) {
+      results.push({ storeId, alreadyActive: true });
+      continue;
+    }
+    
+    const threshold = Number(settings.weatherRainThreshold ?? 80);
+    if (!current || !(current.pop >= threshold)) {
+      results.push({ storeId, pop: current ? current.pop : null, belowThreshold: true });
+      continue;
+    }
+
+    // ボーナス有効化
+    await db.ref(`${base}/storeSettings`).update({ weatherActiveDate: today });
+
+    // 自店舗の顧客のみに通知
+    const accounts = (await db.ref(`${base}/accounts`).get()).val() || {};
+    const tokens = [];
+    for (const acc of Object.values(accounts)) {
+      // pushTokens が配列かオブジェクトかに対応
+      const pt = acc.pushTokens;
+      if (Array.isArray(pt)) {
+        for (const t of pt) if (t) tokens.push(t);
+      } else if (typeof pt === "object" && pt) {
+        for (const t of Object.keys(pt)) if (t) tokens.push(t);
+      }
+    }
+
+    let pushed = 0;
+    if (tokens.length > 0) {
+      const cap = Number(settings.weatherCap ?? 10000).toLocaleString();
+      const rate = Math.min(20, Number(settings.weatherRate ?? 10));
+      
+      const result = await admin.messaging().sendEachForMulticast({
+        notification: {
+          title: settings.storeName || "PicoPay",
+          body: `今日は雨の確率${current.pop}%☔ ¥${cap}までのチャージで${rate}%還元!`,
+        },
+        tokens,
+      });
+      pushed = result.successCount;
+    }
+
+    results.push({ storeId, activated: true, pop: current.pop, pushed });
   }
-
-  // Saved at lookup time. Deriving it from the area code would break for
-  // 北海道, 鹿児島 and 沖縄, where one prefecture has several offices and the
-  // codes don't simply zero out.
-  const office = settings.weatherOffice || `${settings.weatherAreaCode.slice(0, 2)}0000`;
-  const res = await fetch(`https://www.jma.go.jp/bosai/forecast/data/forecast/${office}.json`);
-  const fc = await res.json();
-
-  const series = (((fc[0] || {}).timeSeries || [])[1]) || {};
-  const area =
-    (series.areas || []).find((a) => a.area.code === settings.weatherAreaCode) ||
-    (series.areas || [])[0];
-  const pops = (area && area.pops) || [];
-  const defines = series.timeDefines || [];
-
-  // Line the three blocks up with the hours they cover, skipping blocks that
-  // belong to an earlier day (the feed sometimes starts mid-day).
-  const todayPops = defines
-    .map((t, i) => ({ time: new Date(t), pop: Number(pops[i]) }))
-    .filter((x) => ymd(new Date(x.time.getTime() + 9 * 60 * 60 * 1000)) === today);
-
-  const current = todayPops.find((x) => {
-    const h = new Date(x.time.getTime() + 9 * 60 * 60 * 1000).getUTCHours();
-    return slotIndexForHour(hour) === slotIndexForHour(h);
-  });
-  const maxPop = todayPops.reduce((m, x) => Math.max(m, x.pop || 0), 0);
-
-  await db.ref("weather").set({
-    date: today,
-    updatedAt: Date.now(),
-    areaName: area ? area.area.name : null,
-    currentPop: current ? current.pop : null,
-    maxPop,
-  });
-
-  // ---- Auto broadcast ----
-  if (settings.weatherAutoMode !== "auto") {
-    return { statusCode: 200, body: JSON.stringify({ pop: current ? current.pop : null, mode: "manual" }) };
-  }
-  if (Number(settings.weatherSendHour ?? 10) !== hour) {
-    return { statusCode: 200, body: JSON.stringify({ waiting: true }) };
-  }
-  if (settings.weatherActiveDate === today) {
-    return { statusCode: 200, body: JSON.stringify({ alreadyActive: true }) };
-  }
-  const threshold = Number(settings.weatherRainThreshold ?? 80);
-  if (!current || !(current.pop >= threshold)) {
-    return { statusCode: 200, body: JSON.stringify({ pop: current ? current.pop : null, belowThreshold: true }) };
-  }
-
-  await db.ref("storeSettings").update({ weatherActiveDate: today });
-
-  const accounts = (await db.ref("accounts").get()).val() || {};
-  const tokens = [];
-  for (const acc of Object.values(accounts)) {
-    for (const t of acc.pushTokens || []) tokens.push(t);
-  }
-  if (tokens.length === 0) {
-    return { statusCode: 200, body: JSON.stringify({ activated: true, pushed: 0 }) };
-  }
-
-  const cap = Number(settings.weatherCap ?? 10000).toLocaleString();
-  const rate = Math.min(20, Number(settings.weatherRate ?? 10));
-  const result = await admin.messaging().sendEachForMulticast({
-    notification: {
-      title: settings.storeName || "PicoPay",
-      body: `今日は雨の確率${current.pop}%☔ ¥${cap}までのチャージで${rate}%還元!`,
-    },
-    tokens,
-  });
 
   return {
     statusCode: 200,
-    body: JSON.stringify({ activated: true, pop: current.pop, pushed: result.successCount }),
+    body: JSON.stringify({ today, hour, processed: results.length, results }),
   };
 };
