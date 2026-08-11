@@ -527,7 +527,7 @@ export default function App() {
   const [activeRole, setActiveRole] = useState("other1");
   useEffect(() => {
     if (!storeId) return;
-    return subscribeToRoles(setRoles);
+    return subscribeToRoles(storeId, setRoles);
   }, [storeId]);
   useEffect(() => {
     if (activeRole === "other1") return;
