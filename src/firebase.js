@@ -350,6 +350,7 @@ export async function ensureStatsStarted(storeId) {
   }
 }
 
+
 // ============================================
 // 店舗・ロール管理
 // ============================================
@@ -359,8 +360,9 @@ export function setCurrentStore(storeId) {
 }
 
 export async function resolveStoreForAdmin(adminId) {
-  const snapshot = await get(ref(db, `admins/${adminId}/stores`));
-  return snapshot.val() || [];
+  const snapshot = await get(ref(db, `storeAdmins/${adminId}`));
+  const storeId = snapshot.val();
+  return storeId ? [storeId] : [];
 }
 
 export async function resolveStoreForCustomer(customerId) {
