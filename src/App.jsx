@@ -552,8 +552,9 @@ export default function App() {
     return subscribeToWeather(storeId,setWeather);
   }, [storeId]);
   const refreshStats = useCallback(async () => {
-    setStats(await getStats());
-  }, []);
+  if (!storeId) return;
+  setStats(await getStats(storeId));
+}, [storeId]);
   useEffect(() => {
     if (mode !== "store" || !authUser || !storeId) return;
     // 基準日(3/31・9/30)の残高を記録する処理は廃止した(2026-08-07)。
