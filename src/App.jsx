@@ -54,13 +54,7 @@ import {
 //   /customer → customer screen (share this URL, or the setup link, with customers)
 //   anything else defaults to /store, so the bare site URL still works.
 function modeFromPath() {
-  const path = window.location.pathname;
-  if (path.startsWith("/customer")) return "customer";
-  if (path.startsWith("/store")) return "store";
-  // トップが開かれた時。iOSはblob:のmanifestを読めず開く先が効かないため、
-  // ホーム画面のアイコンからだとここに来る。端末にお客様IDが残っていれば
-  // お客様として扱う。
-  return localStorage.getItem("picopay-customer-id") ? "customer" : "store";
+  return window.location.pathname.startsWith("/customer") ? "customer" : "store";
 }
 
 // ---------------- STORE LOGIN ----------------
@@ -445,21 +439,8 @@ export default function App() {
       // 「URL is invalid」として丸ごと捨てられる。src が捨てられると
       // ホーム画面のアイコンが設定されず既定のものに戻ってしまう。
       const origin = window.location.origin;
-      // お客様側は、開く先にお客様IDまで含める(2026-08-07)。iPhone では
-      // ホーム画面に追加したアプリと Safari とで保存領域が別なので、Safari
-      // で開いた時に端末へ覚えさせたお客様IDが引き継がれない。IDを付けて
-      // おかないと「どのお客様か分からない状態」で開いてしまう。
-      //
-      // myCustomerId の state はこの useEffect より後で定義されるため、
-      // ここでは同じ手順(URLの id → 端末に覚えたID)で直接取り出す。
-      let startUrl;
-      if (window.location.pathname.startsWith("/store")) {
-        startUrl = origin + "/store";
-      } else {
-        const fromLink = new URLSearchParams(window.location.search).get("id");
-        const savedId = fromLink || localStorage.getItem("picopay-customer-id");
-        startUrl = origin + "/customer" + (savedId ? `?id=${savedId}` : "");
-      }
+      const startUrl =
+        origin + (window.location.pathname.startsWith("/store") ? "/store" : "/customer");
       // 店舗のロゴは Storage の URL、ロゴを加工したものは data: URL で、
       // どちらも既に絶対。既定の favicon だけ origin を付ける。
       const iconSrc = iconUrl || `${origin}/favicon.svg`;
@@ -527,7 +508,7 @@ export default function App() {
   const [activeRole, setActiveRole] = useState("other1");
   useEffect(() => {
     if (!storeId) return;
-    return subscribeToRoles(storeId, setRoles);
+    return subscribeToRoles(setRoles);
   }, [storeId]);
   useEffect(() => {
     if (activeRole === "other1") return;
@@ -549,12 +530,11 @@ export default function App() {
       : roles[activeRole] || {};
   useEffect(() => {
     if (!storeId) return;
-    return subscribeToWeather(storeId,setWeather);
+    return subscribeToWeather(setWeather);
   }, [storeId]);
   const refreshStats = useCallback(async () => {
-  if (!storeId) return;
-  setStats(await getStats(storeId));
-}, [storeId]);
+    setStats(await getStats());
+  }, []);
   useEffect(() => {
     if (mode !== "store" || !authUser || !storeId) return;
     // 基準日(3/31・9/30)の残高を記録する処理は廃止した(2026-08-07)。
@@ -571,9 +551,8 @@ export default function App() {
   const handleSetRankingEnabled = (value) => handleSaveStoreSettings({ rankingEnabled: value });
   const handleSetWeatherEnabled = (value) => handleSaveStoreSettings({ weatherEnabled: value });
 
-  const handleRegisterCustomer = async ({ name, phone, email, referredBy }) => {
-    // SMS認証は必須(2026-08-07)。店舗が選べる形はやめた。
-    const customerId = await createAccount({ name, phone, email, referredBy });
+  const handleRegisterCustomer = async ({ name, phone, email, requireVerification, referredBy }) => {
+    const customerId = await createAccount({ name, phone, email, requireVerification, referredBy });
     await refreshOneCustomer(customerId);
     return customerId;
   };
@@ -597,21 +576,25 @@ export default function App() {
   const handleUpdateNotifyPrefs = async (customerId, prefs) => {
     let pushToken = null;
     if (prefs.push) {
-      const result = await requestPushToken();
-      pushToken = result.token;
+      pushToken = await requestPushToken();
       if (!pushToken) {
-        // iOS PWA でない場合など、トークン取得失敗の理由をコンソールに出力
-        console.warn("[Push] トークン取得失敗:", result.error);
+        // Permission denied, or the browser doesn't support push — keep the
+        // checkbox state the customer chose, but there's no token to save,
+        // so nothing will actually be deliverable until they allow it.
       }
     }
+    // Only these two fields — the rules no longer allow writing a whole
+    // account from the browser, and rewriting it wholesale is how a balance
+    // could get clobbered by a stale copy anyway.
     await updateNotifyPrefs(customerId, prefs, pushToken);
   };
 
-const handleSendPush = async (tokens, body) => {
+  const handleSendPush = async (tokens, body) => {
     if (!tokens || tokens.length === 0) return;
     const title = storeSettings.storeName || "PicoPay";
-    await sendPushNotification({ tokens, title, body, storeId: currentStoreId });
+    await sendPushNotification({ tokens, title, body });
   };
+
   // Money never moves in the browser any more — these just tell the server
   // what happened and let it work out the amounts from the store's settings.
   const handleCharge = async (amount, customerId) => {
@@ -695,28 +678,33 @@ const handleSendPush = async (tokens, body) => {
   // decide whether the gate is needed *before* the customer is
   // authenticated (see fetchVerificationInfo in firebase.js).
   const [myPhone, setMyPhone] = useState(undefined); // undefined = not checked yet, null = no phone on file
+  const [requireVerification, setRequireVerification] = useState(true);
   // Has this device's phone been verified against this account's phone yet?
   const [phoneVerified, setPhoneVerified] = useState(false);
 
   useEffect(() => {
     if (mode !== "customer" || !myCustomerId || !storeId) return;
     let cancelled = false;
-    fetchVerificationInfo(myCustomerId).then(({ phone }) => {
-      if (!cancelled) setMyPhone(phone);
+    fetchVerificationInfo(myCustomerId).then(({ phone, requireVerification }) => {
+      if (!cancelled) {
+        setMyPhone(phone);
+        setRequireVerification(requireVerification);
+      }
     });
     return () => {
       cancelled = true;
     };
   }, [mode, myCustomerId, storeId]);
 
-  // この端末で既にそのお客様の電話番号として認証済みなら、認証画面は飛ばす。
-  // SMS認証は必須なので「要否」の分岐は無い(2026-08-07)。
+  // If this browser session's Firebase Auth phone number already matches the
+  // account's registered phone, or verification isn't required at all, skip
+  // the verification screen and load the real account data.
   useEffect(() => {
     if (myPhone === undefined) return; // still checking
-    if (!myPhone || authUser?.phoneNumber === myPhone) {
+    if (!myPhone || !requireVerification || authUser?.phoneNumber === myPhone) {
       setPhoneVerified(true);
     }
-  }, [myPhone, authUser]);
+  }, [myPhone, requireVerification, authUser]);
 
   useEffect(() => {
     if (mode !== "customer" || !myCustomerId || !phoneVerified || !storeId) return;
@@ -976,7 +964,6 @@ const handleSendPush = async (tokens, body) => {
             pointBalance={account.pointBalance || 0}
             depositBalance={account.depositBalance || 0}
             cumulativeSpend={account.cumulativeSpend || 0}
-            customerName={account.profile?.name || null}
             bonusEligible={account.bonusEligible || false}
             onUseBonusSpin={handleUseBonusSpin}
             history={myTransactions}
