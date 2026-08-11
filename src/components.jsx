@@ -1288,7 +1288,6 @@ function RankSettings({ rankingEnabled, setRankingEnabled, storeSettings, onSave
 // ---------------- STORE CHARGE / PURCHASE SCREEN ----------------
 function ChargeScreen({ onCharge, onDeduct }) {
   const [screenMode, setScreenMode] = useState("charge"); // "charge" | "purchase"
-  const [readMethod, setReadMethod] = useState("qr"); // "qr" | "cardTap"
   const [amount, setAmount] = useState(10000);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState(null);
@@ -1377,11 +1376,6 @@ function ChargeScreen({ onCharge, onDeduct }) {
     }
   };
 
-  const tapCard = () => {
-    setScanning(true);
-    setTimeout(() => complete(), 900);
-  };
-
   return (
     <div className="mt-4 rounded-2xl p-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
       <div className="flex rounded-full p-0.5 w-fit" style={{ background: C.cream }}>
@@ -1407,27 +1401,9 @@ function ChargeScreen({ onCharge, onDeduct }) {
         </span>
       </div>
 
-      <div className="mt-2 flex items-center gap-2">
-        <span className="text-[11px]" style={{ color: C.mute }}>読み取り方法:</span>
-        <div className="flex rounded-full p-0.5" style={{ background: C.cream }}>
-          {[
-            { key: "qr", label: "QR(カードレス)" },
-            { key: "cardTap", label: "物理カードをタッチ" },
-          ].map((m) => (
-            <button
-              key={m.key}
-              onClick={() => { setReadMethod(m.key); reset(); }}
-              className="px-3 py-1 rounded-full text-[11px] font-semibold transition"
-              style={readMethod === m.key ? { background: C.teal, color: "#fff" } : { color: C.mute }}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-      </div>
       <div className="text-[11px] mt-1" style={{ color: C.mute }}>
         {screenMode === "charge"
-          ? `金額を入力してから、お客様の${readMethod === "qr" ? "画面のQRコードをカメラで読み取ります" : "カードをタッチします"}。同時に、お客様側・この管理画面側の両方に反映されます。`
+          ? "金額を入力してから、お客様の画面のQRコードをカメラで読み取ります。同時に、お客様側・この管理画面側の両方に反映されます。"
           : "POS連携済みの店舗は会計金額が自動入力されます。未連携の場合は手動で金額を入力してください。"}
       </div>
 
@@ -1481,7 +1457,7 @@ function ChargeScreen({ onCharge, onDeduct }) {
         </div>
       )}
 
-      {readMethod === "qr" && scanning && (
+      {scanning && (
         <div className="mt-3 rounded-xl overflow-hidden" style={{ border: `1px solid ${C.line}` }}>
           <div id={scannerDivId} style={{ width: "100%" }} />
         </div>
@@ -1495,18 +1471,11 @@ function ChargeScreen({ onCharge, onDeduct }) {
 
       {!done ? (
         <button
-          onClick={readMethod === "qr" ? (scanning ? undefined : startScan) : tapCard}
-          disabled={scanning && readMethod !== "qr"}
+          onClick={scanning ? undefined : startScan}
           className="mt-4 w-full rounded-full py-3 text-sm font-bold"
-          style={{ background: screenMode === "charge" ? C.teal : C.ink, color: "#fff", opacity: scanning && readMethod !== "qr" ? 0.6 : 1 }}
+          style={{ background: screenMode === "charge" ? C.teal : C.ink, color: "#fff" }}
         >
-          {readMethod === "qr"
-            ? scanning
-              ? "カメラでお客様のQRコードを映してください"
-              : "カメラでQRコードを読み取る"
-            : scanning
-              ? "読み取り中…"
-              : "お客様のカードをタッチする"}
+          {scanning ? "カメラでお客様のQRコードを映してください" : "カメラでQRコードを読み取る"}
         </button>
       ) : (
         <div className="mt-4 rounded-xl p-3 text-center" style={{ background: C.coralSoft }}>
@@ -1537,8 +1506,6 @@ function CustomerRegistration({ onDone, onRegister, existingCustomers }) {
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [referredBy, setReferredBy] = useState("");
-  const [issueMethod, setIssueMethod] = useState("qr"); // "qr" | "card"
-  const [requireVerification, setRequireVerification] = useState(true);
   const [notify, setNotify] = useState({ email: true });
   const [issued, setIssued] = useState(null);
   const [issuing, setIssuing] = useState(false);
@@ -1576,7 +1543,6 @@ function CustomerRegistration({ onDone, onRegister, existingCustomers }) {
         name,
         phone: normalizedPhone,
         email,
-        requireVerification,
         referredBy: referredBy.trim() || null,
       });
       setIssued(customerId);
@@ -1651,39 +1617,6 @@ function CustomerRegistration({ onDone, onRegister, existingCustomers }) {
           className="w-full rounded-lg px-3 py-2 text-sm outline-none"
           style={{ background: C.cream, color: C.ink }}
         />
-      </div>
-
-      <div className="mt-3 text-[11px] font-semibold" style={{ color: C.ink }}>発行方法</div>
-      <div className="mt-1 flex gap-2">
-        {[
-          { key: "qr", label: "QRコード(カードレス)" },
-          { key: "card", label: "物理カードにシリアル書込み" },
-        ].map((o) => (
-          <button
-            key={o.key}
-            onClick={() => setIssueMethod(o.key)}
-            className="flex-1 rounded-lg py-2 text-[11px] font-semibold"
-            style={
-              issueMethod === o.key
-                ? { background: C.teal, color: "#fff" }
-                : { background: C.cream, color: C.mute }
-            }
-          >
-            {o.label}
-          </button>
-        ))}
-      </div>
-
-      <label className="mt-3 flex items-center justify-between text-[12px]" style={{ color: C.ink }}>
-        <span>本人確認を必須にする(SMS認証)</span>
-        <input
-          type="checkbox"
-          checked={requireVerification}
-          onChange={(e) => setRequireVerification(e.target.checked)}
-        />
-      </label>
-      <div className="text-[10px] mt-1" style={{ color: C.mute }}>
-        オンにすると、お客様が初めてPicoPayを開く際にご自身のスマホでSMS認証が必要になります(お店側での操作は不要です)
       </div>
 
       <div className="mt-2 text-[11px] font-semibold" style={{ color: C.ink }}>通知設定</div>
@@ -1835,12 +1768,18 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
     }
   };
 
+  // 失敗した時に画面へ出す(2026-08-07)。以前は catch が無く、失敗しても
+  // ボタンが薄くなって元に戻るだけで、何が起きたか分からなかった。
+  const [deleteError, setDeleteError] = useState(null);
   const confirmedDelete = async () => {
     setBusy(true);
+    setDeleteError(null);
     try {
       await onDeletePermanently(customerId);
       setConfirmDelete(false);
       onDeleted && onDeleted();
+    } catch (e) {
+      setDeleteError(e?.message || "削除に失敗しました");
     } finally {
       setBusy(false);
     }
@@ -2033,6 +1972,11 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
               <div className="text-[12px] mt-2" style={{ color: C.mute }}>
                 {detail?.profile?.name}様のデータを完全に削除します。この操作は取り消せません。
               </div>
+              {deleteError && (
+                <div className="mt-2 rounded-lg px-3 py-2 text-[11px]" style={{ background: "#FDEDED", color: "#B3261E" }}>
+                  {deleteError}
+                </div>
+              )}
               <div className="mt-4 grid grid-cols-2 gap-2">
                 <button
                   onClick={() => setConfirmDelete(false)}
@@ -2065,7 +2009,7 @@ function CustomerDetailPanel({ customerId, onFetch, onSetStatus, onDeletePermane
 // entirely here.
 const MAX_BROADCAST_GROUPS = 10;
 
-function ChannelBroadcastSection({ channelKey, channelLabel, customers, storeSettings, onSave, onSend }) {
+function ChannelBroadcastSection({ channelKey, channelLabel, customers, storeSettings, onSave, onSend, pushIndex = {} }) {
   const [body, setBody] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [showGroupSend, setShowGroupSend] = useState(false);
@@ -4034,7 +3978,7 @@ function StoreView({ totalBalance, onCharge, onDeduct, rankingEnabled, setRankin
 }
 
 // ---------------- CUSTOMER VIEW ----------------
-function CustomerView({ pointBalance, depositBalance, cumulativeSpend = 0, onOpenTerms, bonusEligible, onUseBonusSpin, history, rankingEnabled, customerId, storeSettings = {}, branding = {}, notifyOptIn, onUpdateNotifyPrefs }) {
+function CustomerView({ pointBalance, depositBalance, cumulativeSpend = 0, customerName, onOpenTerms, bonusEligible, onUseBonusSpin, history, rankingEnabled, customerId, storeSettings = {}, branding = {}, notifyOptIn, onUpdateNotifyPrefs }) {
   const [showNotifySettings, setShowNotifySettings] = useState(false);
   const [notifyDraft, setNotifyDraft] = useState({
     push: notifyOptIn?.push || false,
@@ -4103,6 +4047,11 @@ function CustomerView({ pointBalance, depositBalance, cumulativeSpend = 0, onOpe
         >
           <div className="text-3xl">{RANK_META[currentRank.name].crown}</div>
           <div>
+            {customerName && (
+              <div className="text-[12px] font-semibold" style={{ color: C.ink }}>
+                {customerName} 様
+              </div>
+            )}
             <div className="text-sm font-bold" style={{ color: RANK_META[currentRank.name].color }}>
               あなたは今{currentRank.name}会員!
             </div>
