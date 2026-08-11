@@ -549,7 +549,7 @@ export default function App() {
       : roles[activeRole] || {};
   useEffect(() => {
     if (!storeId) return;
-    return subscribeToWeather(setWeather);
+    return subscribeToWeather(storeId,setWeather);
   }, [storeId]);
   const refreshStats = useCallback(async () => {
     setStats(await getStats());
