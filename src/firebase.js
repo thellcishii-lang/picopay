@@ -316,7 +316,7 @@ export async function listCustomers() {
       pointBalance: acc.pointBalance || 0,
       depositBalance: acc.depositBalance || 0,
       notifyOptIn: acc.notifyOptIn || null,
-      pushTokens: acc.pushTokens || [],
+      pushTokens: normalizePushTokens(acc.pushTokens),
     }));
 }
 
@@ -342,7 +342,7 @@ export async function getCustomerEntry(customerId) {
     pointBalance: acc.pointBalance || 0,
     depositBalance: acc.depositBalance || 0,
     notifyOptIn: acc.notifyOptIn || null,
-    pushTokens: acc.pushTokens || [],
+    pushTokens: normalizePushTokens(acc.pushTokens),
   };
 }
 
