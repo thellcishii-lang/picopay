@@ -293,7 +293,12 @@ export async function createAccount({ name, phone, email, requireVerification = 
   });
   return customerId;
 }
-
+function normalizePushTokens(val) {
+  if (!val) return [];
+  if (Array.isArray(val)) return val.filter(Boolean);
+  if (typeof val === "object") return Object.keys(val);
+  return [];
+}
 // List all registered customers (for the store's customer list screen).
 export async function listCustomers() {
   const snapshot = await get(sref("accounts"));
