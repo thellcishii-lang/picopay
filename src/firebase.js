@@ -80,21 +80,57 @@ const VAPID_KEY = "BKdzxi1YhwTVGdrLzaWou8govXVJu45ftEyWjG1huuOjs1ZfQ92v_2QSOS2AU
 // Asks the browser for notification permission and, if granted, returns
 // this device's FCM token (used to target push notifications at it).
 // Returns null if unsupported (e.g. desktop-only Safari) or not granted.
+function isIos() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent);
+}
+
+function isPwa() {
+  if (window.navigator.standalone === true) return true;
+  if (window.matchMedia("(display-mode: standalone)").matches) return true;
+  return false;
+}
 export async function requestPushToken() {
   const supported = await isMessagingSupported().catch(() => false);
-  if (!supported) return null;
-  if (!("serviceWorker" in navigator)) return null;
+  if (!supported) {
+    console.warn("[FCM] このブラウザはプッシュ通知に対応していません");
+    return { token: null, error: "unsupported" };
+  }
+  if (!("serviceWorker" in navigator)) {
+    console.warn("[FCM] Service Worker が利用できません");
+    return { token: null, error: "no-sw" };
+  }
 
-  const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
-  const permission = await Notification.requestPermission();
-  if (permission !== "granted") return null;
+  if (isIos() && !isPwa()) {
+    console.warn("[FCM] iOS Safari はホーム画面に追加後、PWA として開く必要があります");
+    return { token: null, error: "ios-not-pwa" };
+  }
 
-  const messaging = getMessaging(app);
   try {
-    const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
-    return token || null;
+    const existingReg = await navigator.serviceWorker.getRegistration("/firebase-messaging-sw.js");
+    const registration = existingReg || await navigator.serviceWorker.register("/firebase-messaging-sw.js");
+    
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      console.warn("[FCM] 通知許可が得られませんでした:", permission);
+      return { token: null, error: "denied" };
+    }
+
+    const messaging = getMessaging(app);
+    const token = await getToken(messaging, { 
+      vapidKey: VAPID_KEY, 
+      serviceWorkerRegistration: registration 
+    });
+    
+    if (!token) {
+      console.warn("[FCM] トークンの取得に失敗しました");
+      return { token: null, error: "no-token" };
+    }
+    
+    console.log("[FCM] トークン取得成功:", token.slice(0, 20) + "...");
+    return { token, error: null };
   } catch (e) {
-    return null;
+    console.error("[FCM] トークン取得中にエラー:", e);
+    return { token: null, error: e.message };
   }
 }
 
