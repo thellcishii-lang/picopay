@@ -786,22 +786,20 @@ export async function fetchVerificationInfo(customerId) {
 // the browser may still write, so it's written field by field rather than by
 // saving the whole object back.
 export async function updateNotifyPrefs(customerId, prefs, pushToken) {
-  const existing = (await get(sref(`accounts/${customerId}/pushTokens`))).val() || [];
-  const tokens =
-    prefs.push && pushToken && !existing.includes(pushToken)
-      ? [...existing, pushToken]
-      : existing;
+  // 新しいトークンを取得したら、古いトークンはすべて置き換える
+  // （同じ端末で複数トークンが発行されると同じ通知が何度も届くため）
+  let tokens = {};
+  if (prefs.push && pushToken) {
+    tokens[pushToken] = true;
+  }
+  
+  const hasTokens = Object.keys(tokens).length > 0;
 
-  const updates = { [spath(`accounts/${customerId}/notifyOptIn`)]: prefs };
-  if (tokens !== existing) updates[spath(`accounts/${customerId}/pushTokens`)] = tokens;
-
-  // 配信の宛先だけを集めた小さな置き場にも書く(2026-08-07)。
-  //
-  // 店舗側は「ログインした時に読んだ顧客一覧」から宛先を集めていたため、
-  // お客様が後から通知を許可しても気づけず、宛先0件のまま送信処理まで
-  // 到達していなかった。ここに書いておけば、店舗側はこのノードだけを
-  // 見張って、変わった1件を受け取れる。名前も残高も入れないので軽い。
-  updates[spath(`pushIndex/${customerId}`)] = prefs.push
+  const updates = {};
+  updates[spath(`accounts/${customerId}/notifyOptIn`)] = prefs;
+  updates[spath(`accounts/${customerId}/pushTokens`)] = hasTokens ? tokens : null;
+  
+  updates[spath(`pushIndex/${customerId}`)] = prefs.push && hasTokens
     ? { push: true, tokens }
     : null;
 
