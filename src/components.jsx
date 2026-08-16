@@ -4337,3 +4337,4 @@ function CustomerView({ pointBalance, depositBalance, cumulativeSpend = 0, custo
 }
 
 export { C, PICO, mockCustomers, RANK_META, RANKS, BRANDING_SIZES, StoreView, CustomerView };
+
