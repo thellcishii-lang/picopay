@@ -13,7 +13,6 @@ import {
   reissueCustomerAccess,
   updateNotifyPrefs,
   requestPushToken,
-  sendPushNotification,
   subscribeToPushIndex,
   getStoreSettings,
   saveStoreSettings,
