@@ -2045,7 +2045,18 @@ function ChannelBroadcastSection({ channelKey, channelLabel, customers, storeSet
     await onSave({ [historyKey]: [entry, ...history].slice(0, 10) });
   };
 
-  const tokensFor = (pool) => pool.flatMap((c) => pushIndex[c.id]?.tokens || []);
+  const tokensFor = (pool) => {
+  const allTokens = [];
+  for (const c of pool) {
+    const t = pushIndex[c.id]?.tokens;
+    if (Array.isArray(t)) {
+      allTokens.push(...t.filter(Boolean));
+    } else if (t && typeof t === "object") {
+      allTokens.push(...Object.keys(t));
+    }
+  }
+  return [...new Set(allTokens)];
+};
 
   const sendToAll = async () => {
     setSendError(null);
