@@ -15,8 +15,6 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-// Shows the notification when a push arrives while the app isn't in the
-// foreground (e.g. screen locked, browser closed).
 messaging.onBackgroundMessage((payload) => {
   const title = payload.notification?.title || "PicoPay";
   const body = payload.notification?.body || "";
@@ -24,55 +22,56 @@ messaging.onBackgroundMessage((payload) => {
   self.registration.showNotification(title, { body, icon });
 });
 
-// ---- Offline fallback (2026-08-06) ----
-//
-// This lives in the same file as the messaging setup above because a scope
-// can only have one active service worker — registering a second file at
-// the same scope ("/") would silently replace this one and break push
-// notifications.
-//
-// Deliberately does NOT cache the app shell. A first version cached the
-// HTML for "/", "/store" and "/customer", but the hashed JS/CSS bundles
-// weren't cached with it: offline, the cached HTML would load and then
-// fail to fetch its own scripts, leaving a blank white screen instead of
-// the offline notice. Caching the HTML long-term also risks serving a
-// stale app after a deploy.
-//
-// So: cache nothing, and when a page navigation fails, show the offline
-// notice directly. Everything else (Firebase, Netlify Functions, the
-// bundles themselves) is left completely untouched, so nothing here can
-// ever serve a stale balance or an expired QR code.
+// 通知タップ時の処理
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+
+  const urlToOpen = new URL("/customer", self.location.origin).href;
+
+  event.waitUntil(
+    clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((clientList) => {
+        for (const client of clientList) {
+          if (new URL(client.url).origin === self.location.origin && "focus" in client) {
+            return client.focus();
+          }
+        }
+        if (clients.openWindow) {
+          return clients.openWindow(urlToOpen);
+        }
+      })
+  );
+});
+
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => {
-  // 以前のバージョンが作ったシェルキャッシュを片付ける
   event.waitUntil(
     caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
   );
   self.clients.claim();
 });
 
-// 背景・ロゴの配置はログイン画面(StoreLogin)と揃えたクリーム背景+上部ロゴ。
-// ロゴはオフラインでも確実に出るよう、外部ファイルを参照せず inline SVG。
-const OFFLINE_HTML = `<!doctype html>
+const OFFLINE_HTML = `
+<!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PicoPay</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PicoPay</title>
+  <style>
+    body { margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background: #FBF7F0; font-family: sans-serif; }
+    h1 { color: #0E6E5C; margin-bottom: 8px; }
+    p { color: #666; }
+  </style>
 </head>
-<body style="margin:0;background:#FBF7F0;font-family:'Hiragino Sans',sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding-top:64px;">
-  <div style="height:56px;width:56px;border-radius:9999px;background:#FFE4DA;display:flex;align-items:center;justify-content:center;">
-    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#0E6E5C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="2" y="5" width="20" height="14" rx="3"></rect>
-      <path d="M2 10h20"></path>
-    </svg>
-  </div>
-  <div style="margin-top:24px;max-width:360px;width:calc(100% - 32px);border-radius:16px;background:#FFFFFF;border:1px solid #E4DFD3;padding:16px;text-align:center;">
-    <div style="font-size:14px;font-weight:bold;color:#0F2E2B;">オフラインです</div>
-    <div style="font-size:12px;margin-top:6px;color:#6B7A76;">通信状態を確認してから、もう一度お試しください</div>
-  </div>
+<body>
+  <h1>PicoPay</h1>
+  <p>オフラインです</p>
+  <p>通信状態を確認してから、もう一度お試しください</p>
 </body>
-</html>`;
+</html>
+`;
 
 self.addEventListener("fetch", (event) => {
   if (event.request.mode !== "navigate") return;
