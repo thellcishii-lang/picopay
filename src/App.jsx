@@ -360,10 +360,10 @@ export default function App() {
   };
 
   const handleSendPush = async (tokens, body) => {
-    if (!tokens || tokens.length === 0) return;
-    const title = storeSettings.storeName || "PicoPay";
-    await sendPushNotification({ tokens, title, body, storeId: currentStoreId });
-  };
+  if (!tokens || tokens.length === 0) return;
+  const title = storeSettings.storeName || "PicoPay";
+  await sendPushNotification({ tokens, title, body, storeId: currentStoreId });
+};
 
   const handleCharge = async (amount, customerId) => {
     if (!customerId) return;
