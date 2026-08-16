@@ -67,8 +67,6 @@ import {
   TransactionList,
   C,
   PICO_PLACEHOLDER,
-  // statusMessage,  ← この行を削除
-  depositExpiryNoticeAt,
   resolveBrandImage,
 } from "./components.jsx";
 
@@ -485,6 +483,16 @@ export default function App() {
   };
 
   const serviceStatus = storeSettings.serviceStatus || "active";
+  const depositExpiryNoticeAt = (settings, lastVisitAt) => {
+  if (!settings?.depositExpiryEnabled || !lastVisitAt) return null;
+  const years = settings.depositExpiryYears || 1;
+  const noticeDays = 30;
+  const expiryTime = lastVisitAt + years * 365 * 24 * 60 * 60 * 1000;
+  const noticeTime = expiryTime - noticeDays * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  if (now < noticeTime || now > expiryTime) return null;
+  return noticeTime;
+};
   const msg = (key) => {
   const storeMsg = statusMessages.store?.[key];
   const sharedMsg = statusMessages.shared?.[key];
