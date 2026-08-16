@@ -67,7 +67,7 @@ import {
   TransactionList,
   C,
   PICO_PLACEHOLDER,
-  statusMessage,
+  // statusMessage,  ← この行を削除
   depositExpiryNoticeAt,
   resolveBrandImage,
 } from "./components.jsx";
@@ -485,7 +485,18 @@ export default function App() {
   };
 
   const serviceStatus = storeSettings.serviceStatus || "active";
-  const msg = (key) => statusMessage(key, statusMessages.store, statusMessages.shared);
+  const msg = (key) => {
+  const storeMsg = statusMessages.store?.[key];
+  const sharedMsg = statusMessages.shared?.[key];
+  const defaults = {
+    terminatedStore: "この店舗はサービスを終了しました。ご利用ありがとうございました。",
+    warningStore: "サービス継続に関する重要なお知らせがあります。詳細はメールをご確認ください。",
+    suspendedStore: "この店舗は一時停止中です。詳細は運営までお問い合わせください。",
+    terminatedCustomer: "この店舗はサービスを終了しました。残高の払い戻しについては店舗までお問い合わせください。",
+    suspendedCustomer: "この店舗は一時停止中です。詳細は店舗までお問い合わせください。",
+  };
+  return storeMsg || sharedMsg || defaults[key] || key;
+};
   const expiryNoticeAt = depositExpiryNoticeAt(storeSettings, account?.lastVisitAt);
 
   const [termsAgreed, setTermsAgreed] = useState(() => {
