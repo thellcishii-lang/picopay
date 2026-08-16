@@ -4336,4 +4336,36 @@ function CustomerView({ pointBalance, depositBalance, cumulativeSpend = 0, custo
   );
 }
 
-export { C, PICO, mockCustomers, RANK_META, RANKS, BRANDING_SIZES, StoreView, CustomerView };
+export {
+  C,
+  PICO,
+  mockCustomers,
+  RANK_META,
+  RANKS,
+  BRANDING_SIZES,
+  StoreView,
+  CustomerView,
+  StoreLogin,
+  StoreDashboard,
+  CustomerScreen,
+  CustomerRegistration,
+  ChargeScreen,
+  CustomerDetailPanel,
+  SettingsPanel,
+  WeatherCampaignSettings,
+  RankSettings,
+  GachaSettings,
+  DepositBonusSettings,
+  PointSettings,
+  SystemSafetySettings,
+  IssuerInfoSettings,
+  DepositExpirySettings,
+  ChannelBroadcastSection,
+  StatusMessageEditor,
+  RoleManager,
+  TransactionList,
+  PICO_PLACEHOLDER,
+  statusMessage,
+  depositExpiryNoticeAt,
+  resolveBrandImage,
+};
