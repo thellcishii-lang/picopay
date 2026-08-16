@@ -5,7 +5,7 @@ import {
   getDatabase, ref, onValue, set, get, update, remove, increment,
   push, query, orderByChild, limitToLast, startAt, endAt,
 } from "firebase/database";
-import { getMessaging, getToken, isSupported as isMessagingSupported } from "firebase/messaging";
+import { getMessaging, getToken, onMessage, isSupported as isMessagingSupported } from "firebase/messaging";
 import {
   getAuth,
   onAuthStateChanged,
